@@ -1,0 +1,3 @@
+[submodule "third_party/tree-sitter-abl"]
+	path = third_party/tree-sitter-abl
+	url = https://github.com/usagi-coffee/tree-sitter-abl
