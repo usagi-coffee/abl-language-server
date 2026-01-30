@@ -988,6 +988,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter-abl"
 version = "0.0.49"
+source = "git+https://github.com/usagi-coffee/tree-sitter-abl#05505976f84aef976df26cb8ef3508949e907fd3"
 dependencies = [
  "cc",
  "tree-sitter-language",
