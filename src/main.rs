@@ -88,32 +88,32 @@ impl LanguageServer for Backend {
 
     async fn goto_definition(
         &self,
-        params: GotoDefinitionParams,
+        _params: GotoDefinitionParams,
     ) -> Result<Option<GotoDefinitionResponse>> {
         Ok(None)
     }
 
-    async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
+    async fn references(&self, _params: ReferenceParams) -> Result<Option<Vec<Location>>> {
         Ok(None)
     }
 
     async fn semantic_tokens_full(
         &self,
-        params: SemanticTokensParams,
+        _params: SemanticTokensParams,
     ) -> Result<Option<SemanticTokensResult>> {
         Ok(None)
     }
 
     async fn semantic_tokens_range(
         &self,
-        params: SemanticTokensRangeParams,
+        _params: SemanticTokensRangeParams,
     ) -> Result<Option<SemanticTokensRangeResult>> {
         Ok(None)
     }
 
     async fn inlay_hint(
         &self,
-        params: tower_lsp::lsp_types::InlayHintParams,
+        _params: tower_lsp::lsp_types::InlayHintParams,
     ) -> Result<Option<Vec<InlayHint>>> {
         Ok(None)
     }
@@ -123,11 +123,11 @@ impl LanguageServer for Backend {
         self.get_completion(params).await
     }
 
-    async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
+    async fn rename(&self, _params: RenameParams) -> Result<Option<WorkspaceEdit>> {
         Ok(None)
     }
 
-    async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
+    async fn formatting(&self, _params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
         Ok(None)
     }
 
@@ -347,11 +347,10 @@ fn collect_variable_decls(node: Node, src: &[u8], out: &mut Vec<String>) {
     debug!("{}", node.kind());
     if matches!(node.kind(), "variable_definition") {
         if let Some(name) = node.child_by_field_name("name") {
-            if name.kind() == "identifier" {
-                if let Ok(s) = name.utf8_text(src) {
+            if name.kind() == "identifier"
+                && let Ok(s) = name.utf8_text(src) {
                     out.push(s.to_string());
                 }
-            }
         } else {
             // Pattern B: declaration contains an identifier somewhere inside (fallback)
             find_first_identifier(node, src, out);
