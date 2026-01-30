@@ -348,9 +348,10 @@ fn collect_variable_decls(node: Node, src: &[u8], out: &mut Vec<String>) {
     if matches!(node.kind(), "variable_definition") {
         if let Some(name) = node.child_by_field_name("name") {
             if name.kind() == "identifier"
-                && let Ok(s) = name.utf8_text(src) {
-                    out.push(s.to_string());
-                }
+                && let Ok(s) = name.utf8_text(src)
+            {
+                out.push(s.to_string());
+            }
         } else {
             // Pattern B: declaration contains an identifier somewhere inside (fallback)
             find_first_identifier(node, src, out);
