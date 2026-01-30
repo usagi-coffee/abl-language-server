@@ -10,6 +10,8 @@ env:
 
 jobs:
   create-release:
+    permissions:
+      actions: read
     name: Create Release
     runs-on: ubuntu-latest
     outputs:
@@ -32,6 +34,8 @@ jobs:
         prerelease: false
 
   build-release:
+    permissions:
+      actions: read
     name: Build Release - ${{ matrix.target }}
     needs: create-release
     runs-on: ${{ matrix.os }}
