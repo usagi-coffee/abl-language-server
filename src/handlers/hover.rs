@@ -1,5 +1,4 @@
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tree_sitter::Node;
@@ -169,7 +168,6 @@ impl Backend {
     ) -> Option<FunctionSignature> {
         let scope = containing_scope(root, offset)?;
         let current_path = uri.to_file_path().ok()?;
-        let workspace_root = self.workspace_root.lock().await.clone();
 
         let include_sites = collect_include_sites(text);
         let mut seen_files = HashSet::new();
@@ -179,8 +177,9 @@ impl Backend {
                 continue;
             }
 
-            let Some(include_path) =
-                resolve_include_path(&current_path, workspace_root.as_deref(), &include.path)
+            let Some(include_path) = self
+                .resolve_include_path_for(&current_path, &include.path)
+                .await
             else {
                 continue;
             };
@@ -503,31 +502,4 @@ fn is_scope_node(kind: &str) -> bool {
             | "constructor_definition"
             | "destructor_definition"
     )
-}
-
-fn resolve_include_path(
-    current_file: &Path,
-    workspace_root: Option<&Path>,
-    include: &str,
-) -> Option<PathBuf> {
-    let candidate = PathBuf::from(include);
-    if candidate.is_absolute() && candidate.exists() {
-        return Some(candidate);
-    }
-
-    if let Some(current_dir) = current_file.parent() {
-        let from_current = current_dir.join(include);
-        if from_current.exists() {
-            return Some(from_current);
-        }
-    }
-
-    if let Some(root) = workspace_root {
-        let from_root = root.join(include);
-        if from_root.exists() {
-            return Some(from_root);
-        }
-    }
-
-    None
 }

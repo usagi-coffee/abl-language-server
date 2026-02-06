@@ -42,6 +42,11 @@ dumpfile = "database.df"
 
 # Or many dumpfiles
 # dumpfile = ["schema/core.df", "schema/custom.df"]
+
+# Optional include search paths (PROPATH-like)
+# Supports absolute paths and workspace-root-relative paths.
+# Search order is preserved.
+propath = ["/global/a", "includes", "shared/includes"]
 ```
 
 ### Option reference
@@ -51,6 +56,7 @@ dumpfile = "database.df"
 | `completion.enabled` | `bool` | `true` | Enables completion responses |
 | `diagnostics.enabled` | `bool` | `true` | Reserved config flag (currently parser diagnostics and semantic arity checks are active in server flow) |
 | `dumpfile` | `string \| string[]` | `[]` | Path(s) to `.df` dump files; relative paths resolve from workspace root |
+| `propath` | `string \| string[]` | `[]` | Include search roots for `{...}` includes; relative paths resolve from workspace root |
 
 ### Dumpfile behavior
 
@@ -59,6 +65,15 @@ dumpfile = "database.df"
 - Index reload is triggered when:
   - `abl.toml` changes
   - configured dumpfile is saved/changed
+
+### Include resolution behavior
+
+When resolving `{include.i}`, the server checks in this order:
+
+1. Absolute include path (if include is absolute)
+2. Each `propath` entry in the order listed in `abl.toml`
+3. Directory of the current file
+4. Workspace root
 
 ## License
 

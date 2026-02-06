@@ -10,6 +10,8 @@ pub struct AblConfig {
     pub diagnostics: DiagnosticsConfig,
     #[serde(default, deserialize_with = "deserialize_dumpfile")]
     pub dumpfile: Vec<String>,
+    #[serde(default, deserialize_with = "deserialize_propath")]
+    pub propath: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -95,17 +97,64 @@ fn deserialize_dumpfile<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error
 where
     D: serde::Deserializer<'de>,
 {
+    deserialize_string_or_vec(deserializer)
+}
+
+fn deserialize_propath<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserialize_string_or_vec(deserializer)
+}
+
+fn deserialize_string_or_vec<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
     #[derive(Deserialize)]
     #[serde(untagged)]
-    enum DumpFileConfig {
+    enum StringOrVec {
         Single(String),
         Multiple(Vec<String>),
     }
 
-    let parsed = Option::<DumpFileConfig>::deserialize(deserializer)?;
+    let parsed = Option::<StringOrVec>::deserialize(deserializer)?;
     Ok(match parsed {
         None => Vec::new(),
-        Some(DumpFileConfig::Single(path)) => vec![path],
-        Some(DumpFileConfig::Multiple(paths)) => paths,
+        Some(StringOrVec::Single(path)) => vec![path],
+        Some(StringOrVec::Multiple(paths)) => paths,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AblConfig;
+
+    #[test]
+    fn parses_dumpfile_and_propath_as_single_string() {
+        let cfg: AblConfig = toml::from_str(
+            r#"
+dumpfile = "database.df"
+propath = "src/includes"
+"#,
+        )
+        .expect("parse config");
+
+        assert_eq!(cfg.dumpfile, vec!["database.df"]);
+        assert_eq!(cfg.propath, vec!["src/includes"]);
+    }
+
+    #[test]
+    fn parses_dumpfile_and_propath_as_arrays() {
+        let cfg: AblConfig = toml::from_str(
+            r#"
+dumpfile = ["a.df", "b.df"]
+propath = ["/global/a", "relative/includes"]
+"#,
+        )
+        .expect("parse config");
+
+        assert_eq!(cfg.dumpfile, vec!["a.df", "b.df"]);
+        assert_eq!(cfg.propath, vec!["/global/a", "relative/includes"]);
+    }
 }

@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use tower_lsp::lsp_types::*;
 use tree_sitter::Node;
@@ -47,12 +47,12 @@ async fn collect_function_call_arity_diags(
 
     // Include signatures from directly included files.
     if let Ok(current_path) = uri.to_file_path() {
-        let workspace_root = backend.workspace_root.lock().await.clone();
         let include_sites = collect_include_sites(text);
         let mut seen = HashSet::<PathBuf>::new();
         for include in include_sites {
-            let Some(path) =
-                resolve_include_path(&current_path, workspace_root.as_deref(), &include.path)
+            let Some(path) = backend
+                .resolve_include_path_for(&current_path, &include.path)
+                .await
             else {
                 continue;
             };
@@ -250,33 +250,6 @@ fn normalize_function_name(name: &str) -> String {
         .unwrap_or(name)
         .trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '_' && c != '-')
         .to_ascii_uppercase()
-}
-
-fn resolve_include_path(
-    current_file: &Path,
-    workspace_root: Option<&Path>,
-    include: &str,
-) -> Option<PathBuf> {
-    let candidate = PathBuf::from(include);
-    if candidate.is_absolute() && candidate.exists() {
-        return Some(candidate);
-    }
-
-    if let Some(current_dir) = current_file.parent() {
-        let from_current = current_dir.join(include);
-        if from_current.exists() {
-            return Some(from_current);
-        }
-    }
-
-    if let Some(root) = workspace_root {
-        let from_root = root.join(include);
-        if from_root.exists() {
-            return Some(from_root);
-        }
-    }
-
-    None
 }
 
 struct FunctionCallSite {
