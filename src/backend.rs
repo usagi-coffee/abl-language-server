@@ -70,6 +70,7 @@ impl LanguageServer for Backend {
                     all_commit_characters: None,
                     completion_item: None,
                 }),
+                hover_provider: Some(HoverProviderCapability::Simple(true)),
                 execute_command_provider: None,
                 workspace: None,
                 semantic_tokens_provider: Some(
@@ -126,6 +127,10 @@ impl LanguageServer for Backend {
 
     async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
         self.handle_references(params).await
+    }
+
+    async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
+        self.handle_hover(params).await
     }
 
     async fn semantic_tokens_full(
