@@ -30,9 +30,10 @@ impl Backend {
             Some(o) => o,
             None => return Ok(None),
         };
-        let symbol = match ascii_ident_or_dash_at_or_before(&text, offset)
-            .or_else(|| ascii_ident_at_or_before(&text, offset))
-        {
+        let symbol = match symbol_at_offset(tree.root_node(), &text, offset).or_else(|| {
+            ascii_ident_or_dash_at_or_before(&text, offset)
+                .or_else(|| ascii_ident_at_or_before(&text, offset))
+        }) {
             Some(s) => s,
             None => return Ok(None),
         };
@@ -91,7 +92,7 @@ impl Backend {
         }
 
         let table_defs = self.db_table_definitions.lock().await;
-        if table_defs.contains_key(&symbol_upper) {
+        if has_schema_key(&table_defs, &symbol_upper) {
             return Ok(Some(markdown_hover(format!("**DB Table** `{}`", symbol))));
         }
         drop(table_defs);
@@ -135,10 +136,7 @@ impl Backend {
         }
 
         let index_defs = self.db_index_definitions.lock().await;
-        if index_defs
-            .keys()
-            .any(|k| k.eq_ignore_ascii_case(&symbol_upper))
-        {
+        if has_schema_key(&index_defs, &symbol_upper) {
             return Ok(Some(markdown_hover(format!("**DB Index** `{}`", symbol))));
         }
 
@@ -234,21 +232,53 @@ fn normalize_lookup_key(symbol: &str) -> String {
         .to_ascii_uppercase()
 }
 
+fn symbol_at_offset(root: Node<'_>, text: &str, offset: usize) -> Option<String> {
+    let node = root.named_descendant_for_byte_range(offset, offset)?;
+    if node.kind() == "identifier" {
+        return node
+            .utf8_text(text.as_bytes())
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+    }
+
+    for i in 0..node.child_count() {
+        if let Some(ch) = node.child(i as u32)
+            && ch.kind() == "identifier"
+        {
+            return ch
+                .utf8_text(text.as_bytes())
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+        }
+    }
+    None
+}
+
+fn has_schema_key(map: &std::collections::HashMap<String, Vec<Location>>, key_upper: &str) -> bool {
+    map.contains_key(key_upper) || map.keys().any(|k| k.eq_ignore_ascii_case(key_upper))
+}
+
 struct FunctionSignature {
     name: String,
     params: Vec<String>,
     return_type: Option<String>,
+    is_forward: bool,
 }
 
 fn find_function_signature(root: Node, src: &[u8], symbol: &str) -> Option<FunctionSignature> {
-    find_function_signature_in_node(root, src, symbol)
+    let mut matches = Vec::new();
+    collect_function_signatures(root, src, symbol, &mut matches);
+    matches.into_iter().max_by_key(signature_score)
 }
 
-fn find_function_signature_in_node(
+fn collect_function_signatures(
     node: Node,
     src: &[u8],
     symbol: &str,
-) -> Option<FunctionSignature> {
+    out: &mut Vec<FunctionSignature>,
+) {
     if matches!(
         node.kind(),
         "function_definition" | "function_forward_definition"
@@ -263,24 +293,30 @@ fn find_function_signature_in_node(
             .map(|t| t.trim().to_string())
             .filter(|t| !t.is_empty());
 
-        return Some(FunctionSignature {
+        out.push(FunctionSignature {
             name: name.to_string(),
             params,
             return_type,
+            is_forward: node.kind() == "function_forward_definition",
         });
     }
 
     for i in 0..node.child_count() {
-        if let Some(ch) = node.child(i as u32)
-            && let Some(sig) = find_function_signature_in_node(ch, src, symbol)
-        {
-            return Some(sig);
+        if let Some(ch) = node.child(i as u32) {
+            collect_function_signatures(ch, src, symbol, out);
         }
     }
-    None
 }
 
 fn collect_function_params(function_node: Node, src: &[u8]) -> Vec<String> {
+    if let Some(parameters_node) = find_child_by_kind(function_node, "parameters") {
+        let mut header_params = Vec::new();
+        collect_params_by_kind(parameters_node, src, "parameter", &mut header_params);
+        if !header_params.is_empty() {
+            return header_params;
+        }
+    }
+
     let mut out = Vec::new();
     collect_params_recursive(function_node, src, &mut out, true);
     out
@@ -314,6 +350,32 @@ fn collect_params_recursive(node: Node, src: &[u8], out: &mut Vec<String>, is_ro
             collect_params_recursive(ch, src, out, false);
         }
     }
+}
+
+fn collect_params_by_kind(node: Node, src: &[u8], target_kind: &str, out: &mut Vec<String>) {
+    if node.kind() == target_kind
+        && let Some(rendered) = render_param(node, src)
+    {
+        out.push(rendered);
+        return;
+    }
+
+    for i in 0..node.child_count() {
+        if let Some(ch) = node.child(i as u32) {
+            collect_params_by_kind(ch, src, target_kind, out);
+        }
+    }
+}
+
+fn find_child_by_kind<'a>(node: Node<'a>, kind: &str) -> Option<Node<'a>> {
+    for i in 0..node.child_count() {
+        if let Some(ch) = node.child(i as u32)
+            && ch.kind() == kind
+        {
+            return Some(ch);
+        }
+    }
+    None
 }
 
 fn render_param(node: Node, src: &[u8]) -> Option<String> {
@@ -361,6 +423,14 @@ fn render_param(node: Node, src: &[u8]) -> Option<String> {
         Some(mode) => format!("{mode} {name}: {ty}"),
         None => format!("{name}: {ty}"),
     })
+}
+
+fn signature_score(sig: &FunctionSignature) -> (usize, usize, usize) {
+    (
+        sig.params.len(),
+        usize::from(sig.return_type.is_some()),
+        usize::from(!sig.is_forward),
+    )
 }
 
 #[derive(Clone, Copy)]
