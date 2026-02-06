@@ -28,6 +28,8 @@
   - `cargo test`
 - Type-check/build:
   - `cargo check`
+- Build server:
+  - `cargo build`
 - Run the server (stdio transport):
   - `cargo run`
 
@@ -35,16 +37,15 @@ If `cargo` commands fail with crate download errors, the environment has no netw
 
 ## Parser repo integration
 
-- The parser source of truth is the sibling repository at `/home/jk/tree-sitter-abl` (not this repo).
-- Use this repo (`/home/jk/abl-language-server`) for LSP behavior and integration work.
+- `tree-sitter-abl` is a git dependency, so parser changes are not picked up here until dependency update/lockfile refresh.
+- You can access source code of `tree-sitter-abl` through a symlink that is present in the repository at `./tree-sitter-abl` to look up syntax details.
 - Use parser repo commands when grammar/syntax behavior is involved:
   - `cd /home/jk/tree-sitter-abl && bun run test`
   - `cd /home/jk/tree-sitter-abl && bun run parse example.p`
   - `cd /home/jk/tree-sitter-abl && bun run parse:snippet '<snippet>'`
   - `cd /home/jk/tree-sitter-abl && bun run reference '<query>'`
 - Never run `tree-sitter` CLI directly in parser workflows; prefer the `bun run ...` commands defined by the parser repo.
-- When updating parser dependency in `Cargo.toml`, prefer pinning to a commit (`rev = "..."`) instead of tracking a moving git head.
-- Keep parser-specific rules, corpus updates, and grammar design decisions in parser repo; only keep integration glue in this repo.
+- If any change is needed in parser / would be help out please tell, we will implement it in parser by other agent.
 
 ## Conventions
 
@@ -73,5 +74,4 @@ If `cargo` commands fail with crate download errors, the environment has no netw
 
 ## Notes
 
-- `tree-sitter-abl` is a git dependency, so parser changes are not picked up here until dependency update/lockfile refresh, having said that you can access source code of `tree-sitter-abl` through a symlink that is present in the repository at `./tree-sitter-abl` to look up syntax details.
 - This repository may not always include extensive tests; when adding behavior-heavy logic, add tests where practical or document manual verification steps.

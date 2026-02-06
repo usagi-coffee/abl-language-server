@@ -56,3 +56,37 @@ pub fn ascii_ident_prefix(text: &str, mut offset: usize) -> String {
     }
     text[start..offset].to_string()
 }
+
+/// Returns the full ASCII identifier at the given offset or immediately before it.
+pub fn ascii_ident_at_or_before(text: &str, mut offset: usize) -> Option<String> {
+    let bytes = text.as_bytes();
+    if bytes.is_empty() {
+        return None;
+    }
+
+    if offset > bytes.len() {
+        offset = bytes.len();
+    }
+
+    let is_ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+
+    let cursor = if offset < bytes.len() && is_ident(bytes[offset]) {
+        offset
+    } else if offset > 0 && is_ident(bytes[offset - 1]) {
+        offset - 1
+    } else {
+        return None;
+    };
+
+    let mut start = cursor;
+    while start > 0 && is_ident(bytes[start - 1]) {
+        start -= 1;
+    }
+
+    let mut end = cursor + 1;
+    while end < bytes.len() && is_ident(bytes[end]) {
+        end += 1;
+    }
+
+    Some(text[start..end].to_string())
+}

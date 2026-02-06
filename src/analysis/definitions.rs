@@ -1,10 +1,16 @@
-use tower_lsp::lsp_types::CompletionItemKind;
+use tower_lsp::lsp_types::{CompletionItemKind, Position, Range};
 use tree_sitter::Node;
 
 pub struct AblSymbol {
     pub label: String,
     pub kind: CompletionItemKind,
     pub detail: String,
+}
+
+pub struct AblDefinitionSite {
+    pub label: String,
+    pub range: Range,
+    pub start_byte: usize,
 }
 
 fn completion_kind_for_node(node_kind: &str) -> Option<(CompletionItemKind, &'static str)> {
@@ -66,6 +72,40 @@ pub fn collect_definition_symbols(node: Node, src: &[u8], out: &mut Vec<AblSymbo
     }
 }
 
+/// Walks the syntax tree and extracts locations for all definition names.
+pub fn collect_definition_sites(node: Node, src: &[u8], out: &mut Vec<AblDefinitionSite>) {
+    if completion_kind_for_node(node.kind()).is_some() {
+        if let Some(name) = node.child_by_field_name("name") {
+            push_site(name, src, out);
+        } else {
+            find_first_identifier_site(node, src, out);
+        }
+    }
+
+    for i in 0..node.child_count() {
+        if let Some(ch) = node.child(i as u32) {
+            collect_definition_sites(ch, src, out);
+        }
+    }
+}
+
+/// Walks the syntax tree and extracts locations for function definition names only.
+pub fn collect_function_definition_sites(node: Node, src: &[u8], out: &mut Vec<AblDefinitionSite>) {
+    if is_function_definition_node(node.kind()) {
+        if let Some(name) = node.child_by_field_name("name") {
+            push_site(name, src, out);
+        } else {
+            find_first_identifier_site(node, src, out);
+        }
+    }
+
+    for i in 0..node.child_count() {
+        if let Some(ch) = node.child(i as u32) {
+            collect_function_definition_sites(ch, src, out);
+        }
+    }
+}
+
 fn push_symbol(
     name_node: Node,
     src: &[u8],
@@ -113,6 +153,39 @@ fn find_first_identifier(
     }
 }
 
+fn push_site(name_node: Node, src: &[u8], out: &mut Vec<AblDefinitionSite>) {
+    if let Ok(name) = name_node.utf8_text(src) {
+        let label = name.trim();
+        if !label.is_empty() {
+            out.push(AblDefinitionSite {
+                label: label.to_string(),
+                range: Range::new(
+                    point_to_position(name_node.start_position()),
+                    point_to_position(name_node.end_position()),
+                ),
+                start_byte: name_node.start_byte(),
+            });
+        }
+    }
+}
+
+fn find_first_identifier_site(node: Node, src: &[u8], out: &mut Vec<AblDefinitionSite>) {
+    if node.kind() == "identifier" {
+        push_site(node, src, out);
+        return;
+    }
+
+    for i in 0..node.child_count() {
+        if let Some(ch) = node.child(i as u32) {
+            find_first_identifier_site(ch, src, out);
+        }
+    }
+}
+
+fn point_to_position(point: tree_sitter::Point) -> Position {
+    Position::new(point.row as u32, point.column as u32)
+}
+
 fn symbol_detail(node: Node, src: &[u8], default_detail: &'static str) -> String {
     if let Some(type_node) = node.child_by_field_name("type")
         && let Ok(ty) = type_node.utf8_text(src)
@@ -124,4 +197,11 @@ fn symbol_detail(node: Node, src: &[u8], default_detail: &'static str) -> String
     }
 
     default_detail.to_string()
+}
+
+fn is_function_definition_node(node_kind: &str) -> bool {
+    matches!(
+        node_kind,
+        "function_definition" | "function_forward_definition"
+    )
 }

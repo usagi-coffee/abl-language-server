@@ -56,7 +56,7 @@ impl LanguageServer for Backend {
                 execute_command_provider: None,
                 workspace: None,
                 semantic_tokens_provider: None,
-                definition_provider: None,
+                definition_provider: Some(OneOf::Left(true)),
                 references_provider: None,
                 rename_provider: None,
                 ..ServerCapabilities::default()
@@ -90,9 +90,9 @@ impl LanguageServer for Backend {
 
     async fn goto_definition(
         &self,
-        _params: GotoDefinitionParams,
+        params: GotoDefinitionParams,
     ) -> Result<Option<GotoDefinitionResponse>> {
-        Ok(None)
+        self.handle_goto_definition(params).await
     }
 
     async fn references(&self, _params: ReferenceParams) -> Result<Option<Vec<Location>>> {
