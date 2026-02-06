@@ -65,3 +65,19 @@ fn extract_include_path(body: &str) -> Option<String> {
 fn is_path_char(b: u8) -> bool {
     b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.' | b'/' | b'\\')
 }
+
+#[cfg(test)]
+mod tests {
+    use super::collect_include_sites;
+
+    #[test]
+    fn extracts_include_paths_and_ranges() {
+        let src = "  {zm_catch.i}\n{{&ZM_CIM}cim_sosomt.i &A=B}\n";
+        let sites = collect_include_sites(src);
+
+        assert_eq!(sites.len(), 2);
+        assert_eq!(sites[0].path, "zm_catch.i");
+        assert_eq!(sites[1].path, "cim_sosomt.i");
+        assert!(sites[0].start_offset < sites[0].end_offset);
+    }
+}

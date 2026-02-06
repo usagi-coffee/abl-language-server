@@ -124,3 +124,30 @@ pub fn ascii_ident_or_dash_at_or_before(text: &str, mut offset: usize) -> Option
 
     Some(text[start..end].to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        ascii_ident_at_or_before, ascii_ident_or_dash_at_or_before, ascii_ident_prefix,
+        lsp_pos_to_utf8_byte_offset,
+    };
+    use tower_lsp::lsp_types::Position;
+
+    #[test]
+    fn extracts_prefix_and_identifiers() {
+        let text = "abc f-lpd_det.xyz";
+        assert_eq!(ascii_ident_prefix(text, 3), "abc");
+        assert_eq!(ascii_ident_at_or_before(text, 3).as_deref(), Some("abc"));
+        assert_eq!(
+            ascii_ident_or_dash_at_or_before(text, 13).as_deref(),
+            Some("f-lpd_det")
+        );
+    }
+
+    #[test]
+    fn position_to_offset_clamps_to_line_end() {
+        let text = "abc\nxy";
+        let off = lsp_pos_to_utf8_byte_offset(text, Position::new(1, 10)).expect("offset");
+        assert_eq!(off, text.len());
+    }
+}

@@ -241,3 +241,46 @@ fn field_documentation(field: &DbFieldInfo) -> Option<Documentation> {
         Some(Documentation::String(lines.join("\n")))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        field_detail, field_documentation, qualifier_before_dot, text_has_dot_before_cursor,
+    };
+    use crate::backend::DbFieldInfo;
+    use tower_lsp::lsp_types::Documentation;
+
+    #[test]
+    fn finds_qualifier_before_dot_with_dash() {
+        let text = "f-lpd_det.";
+        let offset = text.len();
+        let prefix = "";
+        assert_eq!(
+            qualifier_before_dot(text, offset, prefix).as_deref(),
+            Some("f-lpd_det")
+        );
+        assert!(text_has_dot_before_cursor(text, offset));
+    }
+
+    #[test]
+    fn renders_field_detail_and_docs() {
+        let field = DbFieldInfo {
+            name: "z9zw_id".to_string(),
+            field_type: Some("CHARACTER".to_string()),
+            format: Some("x(24)".to_string()),
+            label: Some("ID".to_string()),
+            description: Some("Identifier".to_string()),
+        };
+
+        assert_eq!(field_detail(&field, "z9zw_mstr"), "CHARACTER (z9zw_mstr)");
+        let docs = field_documentation(&field).expect("documentation");
+        match docs {
+            Documentation::String(s) => {
+                assert!(s.contains("Label: ID"));
+                assert!(s.contains("Format: x(24)"));
+                assert!(s.contains("Description: Identifier"));
+            }
+            _ => panic!("unexpected documentation kind"),
+        }
+    }
+}

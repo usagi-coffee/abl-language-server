@@ -314,3 +314,41 @@ fn collect_ts_error_diags(node: Node, out: &mut Vec<Diagnostic>) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{collect_function_arities, collect_function_calls};
+    use std::collections::HashMap;
+
+    #[test]
+    fn extracts_function_arities_and_call_arg_counts() {
+        let src = r#"
+FUNCTION foo RETURNS LOGICAL (INPUT p1 AS CHARACTER, OUTPUT p2 AS INTEGER):
+  RETURN TRUE.
+END FUNCTION.
+
+DEFINE VARIABLE x AS LOGICAL NO-UNDO.
+x = foo("a", 1).
+x = foo().
+"#;
+
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_abl::LANGUAGE.into())
+            .expect("set abl language");
+        let tree = parser.parse(src, None).expect("parse source");
+
+        let mut signatures = HashMap::<String, Vec<usize>>::new();
+        collect_function_arities(tree.root_node(), src.as_bytes(), &mut signatures);
+        assert_eq!(signatures.get("FOO").cloned(), Some(vec![2]));
+
+        let mut calls = Vec::new();
+        collect_function_calls(tree.root_node(), src.as_bytes(), &mut calls);
+        let foo_calls = calls
+            .into_iter()
+            .filter(|c| c.name_upper == "FOO")
+            .map(|c| c.arg_count)
+            .collect::<Vec<_>>();
+        assert_eq!(foo_calls, vec![2, 0]);
+    }
+}

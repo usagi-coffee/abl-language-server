@@ -433,6 +433,38 @@ fn signature_score(sig: &FunctionSignature) -> (usize, usize, usize) {
     )
 }
 
+#[cfg(test)]
+mod tests {
+    use super::find_function_signature;
+
+    #[test]
+    fn picks_richest_function_signature_and_renders_params() {
+        let src = r#"
+FUNCTION foo RETURNS LOGICAL FORWARD.
+
+FUNCTION foo RETURNS LOGICAL (INPUT p1 AS CHARACTER, OUTPUT p2 AS INTEGER):
+  RETURN TRUE.
+END FUNCTION.
+"#;
+
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_abl::LANGUAGE.into())
+            .expect("set abl language");
+        let tree = parser.parse(src, None).expect("parse source");
+
+        let sig = find_function_signature(tree.root_node(), src.as_bytes(), "foo")
+            .expect("function signature");
+        assert_eq!(sig.name, "foo");
+        assert_eq!(sig.return_type.as_deref(), Some("LOGICAL"));
+        assert_eq!(sig.params.len(), 2);
+        assert!(sig.params[0].contains("INPUT"));
+        assert!(sig.params[0].contains("p1"));
+        assert!(sig.params[1].contains("OUTPUT"));
+        assert!(sig.params[1].contains("p2"));
+    }
+}
+
 #[derive(Clone, Copy)]
 struct ByteScope {
     start: usize,

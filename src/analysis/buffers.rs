@@ -40,3 +40,34 @@ fn normalize_table_name(raw: &str) -> String {
         .trim()
         .to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::collect_buffer_mappings;
+
+    #[test]
+    fn collects_buffer_alias_and_table_name() {
+        let src = r#"
+DEFINE BUFFER f-lpd_det FOR lpd_det.
+DEFINE BUFFER b-pt FOR sports.pt_mstr.
+"#;
+
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_abl::LANGUAGE.into())
+            .expect("set abl language");
+        let tree = parser.parse(src, None).expect("parse source");
+
+        let mut out = Vec::new();
+        collect_buffer_mappings(tree.root_node(), src.as_bytes(), &mut out);
+
+        assert!(
+            out.iter()
+                .any(|m| m.alias == "f-lpd_det" && m.table == "lpd_det")
+        );
+        assert!(
+            out.iter()
+                .any(|m| m.alias == "b-pt" && m.table == "pt_mstr")
+        );
+    }
+}
