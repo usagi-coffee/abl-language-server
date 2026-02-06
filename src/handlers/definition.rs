@@ -238,25 +238,19 @@ impl Backend {
 
         // Fallback: DB schema definitions parsed from configured .df dumpfile(s).
         let table_defs = self.db_table_definitions.lock().await;
-        if let Some(locations) = table_defs.get(&symbol_upper)
-            && let Some(location) = pick_single_location(locations)
-        {
+        if let Some(location) = lookup_schema_location(&table_defs, &symbol_upper) {
             return Ok(Some(GotoDefinitionResponse::Scalar(location)));
         }
         drop(table_defs);
 
         let field_defs = self.db_field_definitions.lock().await;
-        if let Some(locations) = field_defs.get(&symbol_upper)
-            && let Some(location) = pick_single_location(locations)
-        {
+        if let Some(location) = lookup_schema_location(&field_defs, &symbol_upper) {
             return Ok(Some(GotoDefinitionResponse::Scalar(location)));
         }
         drop(field_defs);
 
         let index_defs = self.db_index_definitions.lock().await;
-        if let Some(locations) = index_defs.get(&symbol_upper)
-            && let Some(location) = pick_single_location(locations)
-        {
+        if let Some(location) = lookup_schema_location(&index_defs, &symbol_upper) {
             return Ok(Some(GotoDefinitionResponse::Scalar(location)));
         }
 
@@ -338,6 +332,25 @@ fn pick_single_location(locations: &[Location]) -> Option<Location> {
             .cmp(b.uri.as_str())
             .then(a.range.start.line.cmp(&b.range.start.line))
             .then(a.range.start.character.cmp(&b.range.start.character))
+    })
+}
+
+fn lookup_schema_location(
+    defs: &std::collections::HashMap<String, Vec<Location>>,
+    symbol_upper: &str,
+) -> Option<Location> {
+    if let Some(locations) = defs.get(symbol_upper)
+        && let Some(location) = pick_single_location(locations)
+    {
+        return Some(location);
+    }
+
+    defs.iter().find_map(|(name, locations)| {
+        if name.eq_ignore_ascii_case(symbol_upper) {
+            pick_single_location(locations)
+        } else {
+            None
+        }
     })
 }
 
