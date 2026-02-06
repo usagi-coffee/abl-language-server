@@ -8,6 +8,8 @@ use tower_lsp::lsp_types::InitializeParams;
 pub struct AblConfig {
     pub completion: CompletionConfig,
     pub diagnostics: DiagnosticsConfig,
+    #[serde(default, deserialize_with = "deserialize_dumpfile")]
+    pub dumpfile: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -87,4 +89,23 @@ pub async fn load_from_workspace_root(root: Option<&Path>) -> LoadedAblConfig {
             path: Some(path),
         },
     }
+}
+
+fn deserialize_dumpfile<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum DumpFileConfig {
+        Single(String),
+        Multiple(Vec<String>),
+    }
+
+    let parsed = Option::<DumpFileConfig>::deserialize(deserializer)?;
+    Ok(match parsed {
+        None => Vec::new(),
+        Some(DumpFileConfig::Single(path)) => vec![path],
+        Some(DumpFileConfig::Multiple(paths)) => paths,
+    })
 }

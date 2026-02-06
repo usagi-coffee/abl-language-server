@@ -23,6 +23,8 @@ impl Backend {
     pub async fn handle_did_save(&self, params: DidSaveTextDocumentParams) {
         self.maybe_reload_config_for_uri(&params.text_document.uri)
             .await;
+        self.maybe_reload_db_tables_for_uri(&params.text_document.uri)
+            .await;
         debug!("file saved!");
     }
 

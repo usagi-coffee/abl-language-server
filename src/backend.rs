@@ -1,6 +1,7 @@
-use dashmap::DashMap;
+use dashmap::{DashMap, DashSet};
 use log::{debug, warn};
 use serde_json::Value;
+use std::collections::HashSet;
 use std::path::Path;
 use tokio::sync::Mutex;
 use tower_lsp::jsonrpc::Result;
@@ -13,10 +14,12 @@ use crate::config::{AblConfig, find_workspace_root, load_from_workspace_root};
 pub struct Backend {
     pub client: Client,
     pub parser: Mutex<Parser>,
+    pub df_parser: Mutex<Parser>,
     pub trees: DashMap<Url, Tree>,
     pub docs: DashMap<Url, String>,
     pub workspace_root: Mutex<Option<std::path::PathBuf>>,
     pub config: Mutex<AblConfig>,
+    pub db_tables: DashSet<String>,
 }
 
 #[tower_lsp::async_trait]
@@ -55,7 +58,19 @@ impl LanguageServer for Backend {
                 }),
                 execute_command_provider: None,
                 workspace: None,
-                semantic_tokens_provider: None,
+                semantic_tokens_provider: Some(
+                    SemanticTokensServerCapabilities::SemanticTokensOptions(
+                        SemanticTokensOptions {
+                            legend: SemanticTokensLegend {
+                                token_types: vec![SemanticTokenType::TYPE],
+                                token_modifiers: vec![],
+                            },
+                            range: Some(true),
+                            full: Some(SemanticTokensFullOptions::Bool(true)),
+                            work_done_progress_options: WorkDoneProgressOptions::default(),
+                        },
+                    ),
+                ),
                 definition_provider: Some(OneOf::Left(true)),
                 references_provider: None,
                 rename_provider: None,
@@ -101,16 +116,16 @@ impl LanguageServer for Backend {
 
     async fn semantic_tokens_full(
         &self,
-        _params: SemanticTokensParams,
+        params: SemanticTokensParams,
     ) -> Result<Option<SemanticTokensResult>> {
-        Ok(None)
+        self.handle_semantic_tokens_full(params).await
     }
 
     async fn semantic_tokens_range(
         &self,
-        _params: SemanticTokensRangeParams,
+        params: SemanticTokensRangeParams,
     ) -> Result<Option<SemanticTokensRangeResult>> {
-        Ok(None)
+        self.handle_semantic_tokens_range(params).await
     }
 
     async fn inlay_hint(
@@ -156,6 +171,9 @@ impl LanguageServer for Backend {
             if is_abl_toml_uri(&change.uri) {
                 self.reload_workspace_config().await;
                 break;
+            } else if self.is_configured_dumpfile_uri(&change.uri).await {
+                self.reload_db_tables_from_current_config().await;
+                break;
             }
         }
         debug!("watched files have changed!");
@@ -173,8 +191,13 @@ impl Backend {
         let workspace_root = self.workspace_root.lock().await.clone();
         let loaded = load_from_workspace_root(workspace_root.as_deref()).await;
 
+        let dumpfiles = loaded.config.dumpfile.clone();
         let mut config = self.config.lock().await;
         *config = loaded.config;
+        drop(config);
+
+        self.reload_db_tables(workspace_root.as_deref(), &dumpfiles)
+            .await;
 
         if let Some(path) = loaded.path {
             if Path::new(&path).exists() {
@@ -195,6 +218,68 @@ impl Backend {
             self.reload_workspace_config().await;
         }
     }
+
+    pub async fn maybe_reload_db_tables_for_uri(&self, uri: &Url) {
+        if self.is_configured_dumpfile_uri(uri).await {
+            self.reload_db_tables_from_current_config().await;
+        }
+    }
+
+    async fn reload_db_tables(&self, workspace_root: Option<&Path>, dumpfiles: &[String]) {
+        let mut tables = HashSet::<String>::new();
+        for dumpfile in dumpfiles {
+            let Some(path) = resolve_dumpfile_path(workspace_root, dumpfile) else {
+                continue;
+            };
+            let Ok(contents) = tokio::fs::read_to_string(&path).await else {
+                continue;
+            };
+
+            let tree = {
+                let mut parser = self.df_parser.lock().await;
+                parser.parse(&contents, None)
+            };
+            let Some(tree) = tree else {
+                continue;
+            };
+
+            crate::analysis::df::collect_df_table_names(
+                tree.root_node(),
+                contents.as_bytes(),
+                &mut tables,
+            );
+        }
+
+        self.db_tables.clear();
+        for table in tables {
+            self.db_tables.insert(table);
+        }
+        debug!(
+            "loaded {} DB tables from configured dumpfile(s)",
+            self.db_tables.len()
+        );
+    }
+
+    async fn reload_db_tables_from_current_config(&self) {
+        let workspace_root = self.workspace_root.lock().await.clone();
+        let dumpfiles = self.config.lock().await.dumpfile.clone();
+        self.reload_db_tables(workspace_root.as_deref(), &dumpfiles)
+            .await;
+    }
+
+    async fn is_configured_dumpfile_uri(&self, uri: &Url) -> bool {
+        let Ok(uri_path) = uri.to_file_path() else {
+            return false;
+        };
+
+        let workspace_root = self.workspace_root.lock().await.clone();
+        let dumpfiles = self.config.lock().await.dumpfile.clone();
+        dumpfiles.iter().any(|dumpfile| {
+            resolve_dumpfile_path(workspace_root.as_deref(), dumpfile)
+                .map(|p| p == uri_path)
+                .unwrap_or(false)
+        })
+    }
 }
 
 fn is_abl_toml_uri(uri: &Url) -> bool {
@@ -202,4 +287,15 @@ fn is_abl_toml_uri(uri: &Url) -> bool {
         .ok()
         .and_then(|path| path.file_name().map(|name| name == "abl.toml"))
         .unwrap_or(false)
+}
+
+fn resolve_dumpfile_path(
+    workspace_root: Option<&Path>,
+    dumpfile: &str,
+) -> Option<std::path::PathBuf> {
+    let candidate = std::path::PathBuf::from(dumpfile);
+    if candidate.is_absolute() {
+        return Some(candidate);
+    }
+    workspace_root.map(|root| root.join(candidate))
 }

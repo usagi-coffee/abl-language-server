@@ -1,4 +1,4 @@
-use dashmap::DashMap;
+use dashmap::{DashMap, DashSet};
 use tokio::sync::Mutex;
 use tower_lsp::{LspService, Server};
 
@@ -24,13 +24,21 @@ async fn main() {
         .set_language(&language.into())
         .expect("Error loading abl parser");
 
+    let mut df_parser = tree_sitter::Parser::new();
+    let df_language = tree_sitter_df::LANGUAGE;
+    df_parser
+        .set_language(&df_language.into())
+        .expect("Error loading df parser");
+
     let (service, socket) = LspService::build(|client| Backend {
         client,
         docs: DashMap::new(),
         trees: DashMap::new(),
         parser: Mutex::new(parser),
+        df_parser: Mutex::new(df_parser),
         workspace_root: Mutex::new(None),
         config: Mutex::new(AblConfig::default()),
+        db_tables: DashSet::new(),
     })
     .finish();
 

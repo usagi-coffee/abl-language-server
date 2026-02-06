@@ -17,6 +17,7 @@ dependencies = [
  "tower-lsp",
  "tree-sitter",
  "tree-sitter-abl",
+ "tree-sitter-df",
 ]
 
 [[package]]
@@ -1039,7 +1040,16 @@ dependencies = [
 [[package]]
 name = "tree-sitter-abl"
 version = "0.0.50"
-source = "git+https://github.com/usagi-coffee/tree-sitter-abl#94a6f2c453edce2d58f87879baf0dcef32839cf3"
+source = "git+https://github.com/usagi-coffee/tree-sitter-abl#014844013795c4bdf4ebc05ecbe2f907e4c99225"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-df"
+version = "0.0.5"
+source = "git+https://github.com/usagi-coffee/tree-sitter-df#70b8fea717a135b8e82721f3c5976c81756b8e9e"
 dependencies = [
  "cc",
  "tree-sitter-language",
