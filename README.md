@@ -1,8 +1,8 @@
 # abl-language-server
 
-Language Server Protocol (LSP) implementation for ABL (OpenEdge Advanced Business Language).
+Language Server Protocol (LSP) implementation for ABL (OpenEdge Advanced Business Language), supports parser-based language features for ABL and optional DB schema integration via `.df` dump files.
 
-The language server is under development and supports parser-based language features for ABL and optional DB schema integration via `.df` dump files.
+The language server currently does not touch your files, it's strictly read-only, there should be no risk of file corruption.
 
 ## Features
 
@@ -31,22 +31,19 @@ The server searches for `abl.toml` in the opened workspace root.
 ### Supported options
 
 ```toml
+# Optional (by defualt searches relative to the opened root directory)
+# Supports absolute paths and workspace-root-relative paths, order is preserved.
+propath = ["/global/a", "includes", "shared/includes"]
+
+# Optional
+# Databse schemas: so we can pull types/go to definition will go to the entry
+dumpfile = ["schema/core.df", "schema/custom.df"]
+
 [completion]
 enabled = true
 
 [diagnostics]
 enabled = true
-
-# One dumpfile
-dumpfile = "database.df"
-
-# Or many dumpfiles
-# dumpfile = ["schema/core.df", "schema/custom.df"]
-
-# Optional include search paths (PROPATH-like)
-# Supports absolute paths and workspace-root-relative paths.
-# Search order is preserved.
-propath = ["/global/a", "includes", "shared/includes"]
 ```
 
 ### Option reference
@@ -72,8 +69,7 @@ When resolving `{include.i}`, the server checks in this order:
 
 1. Absolute include path (if include is absolute)
 2. Each `propath` entry in the order listed in `abl.toml`
-3. Directory of the current file
-4. Workspace root
+3. Workspace root
 
 ## License
 
