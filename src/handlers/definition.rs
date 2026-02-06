@@ -189,7 +189,36 @@ impl Backend {
         let target = include_before
             .or(include_after)
             .map(|(_, location)| location);
-        Ok(target.map(GotoDefinitionResponse::Scalar))
+        if let Some(location) = target {
+            return Ok(Some(GotoDefinitionResponse::Scalar(location)));
+        }
+
+        // Fallback: DB schema definitions parsed from configured .df dumpfile(s).
+        let symbol_upper = normalize_lookup_key(&symbol);
+        let table_defs = self.db_table_definitions.lock().await;
+        if let Some(locations) = table_defs.get(&symbol_upper)
+            && let Some(location) = pick_single_location(locations)
+        {
+            return Ok(Some(GotoDefinitionResponse::Scalar(location)));
+        }
+        drop(table_defs);
+
+        let field_defs = self.db_field_definitions.lock().await;
+        if let Some(locations) = field_defs.get(&symbol_upper)
+            && let Some(location) = pick_single_location(locations)
+        {
+            return Ok(Some(GotoDefinitionResponse::Scalar(location)));
+        }
+        drop(field_defs);
+
+        let index_defs = self.db_index_definitions.lock().await;
+        if let Some(locations) = index_defs.get(&symbol_upper)
+            && let Some(location) = pick_single_location(locations)
+        {
+            return Ok(Some(GotoDefinitionResponse::Scalar(location)));
+        }
+
+        Ok(None)
     }
 }
 
@@ -258,4 +287,20 @@ fn resolve_include_path(
     }
 
     None
+}
+
+fn pick_single_location(locations: &[Location]) -> Option<Location> {
+    locations.iter().cloned().min_by(|a, b| {
+        a.uri
+            .as_str()
+            .cmp(b.uri.as_str())
+            .then(a.range.start.line.cmp(&b.range.start.line))
+            .then(a.range.start.character.cmp(&b.range.start.character))
+    })
+}
+
+fn normalize_lookup_key(symbol: &str) -> String {
+    symbol
+        .trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+        .to_ascii_uppercase()
 }

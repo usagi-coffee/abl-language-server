@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use dashmap::{DashMap, DashSet};
 use tokio::sync::Mutex;
 use tower_lsp::{LspService, Server};
@@ -39,6 +41,9 @@ async fn main() {
         workspace_root: Mutex::new(None),
         config: Mutex::new(AblConfig::default()),
         db_tables: DashSet::new(),
+        db_table_definitions: Mutex::new(HashMap::new()),
+        db_field_definitions: Mutex::new(HashMap::new()),
+        db_index_definitions: Mutex::new(HashMap::new()),
     })
     .finish();
 

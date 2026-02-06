@@ -1,7 +1,7 @@
 use dashmap::{DashMap, DashSet};
 use log::{debug, warn};
 use serde_json::Value;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use tokio::sync::Mutex;
 use tower_lsp::jsonrpc::Result;
@@ -20,6 +20,9 @@ pub struct Backend {
     pub workspace_root: Mutex<Option<std::path::PathBuf>>,
     pub config: Mutex<AblConfig>,
     pub db_tables: DashSet<String>,
+    pub db_table_definitions: Mutex<HashMap<String, Vec<Location>>>,
+    pub db_field_definitions: Mutex<HashMap<String, Vec<Location>>>,
+    pub db_index_definitions: Mutex<HashMap<String, Vec<Location>>>,
 }
 
 #[tower_lsp::async_trait]
@@ -72,7 +75,7 @@ impl LanguageServer for Backend {
                     ),
                 ),
                 definition_provider: Some(OneOf::Left(true)),
-                references_provider: None,
+                references_provider: Some(OneOf::Left(true)),
                 rename_provider: None,
                 ..ServerCapabilities::default()
             },
@@ -110,8 +113,8 @@ impl LanguageServer for Backend {
         self.handle_goto_definition(params).await
     }
 
-    async fn references(&self, _params: ReferenceParams) -> Result<Option<Vec<Location>>> {
-        Ok(None)
+    async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
+        self.handle_references(params).await
     }
 
     async fn semantic_tokens_full(
@@ -227,6 +230,9 @@ impl Backend {
 
     async fn reload_db_tables(&self, workspace_root: Option<&Path>, dumpfiles: &[String]) {
         let mut tables = HashSet::<String>::new();
+        let mut definitions = HashMap::<String, Vec<Location>>::new();
+        let mut field_definitions = HashMap::<String, Vec<Location>>::new();
+        let mut index_definitions = HashMap::<String, Vec<Location>>::new();
         for dumpfile in dumpfiles {
             let Some(path) = resolve_dumpfile_path(workspace_root, dumpfile) else {
                 continue;
@@ -248,15 +254,67 @@ impl Backend {
                 contents.as_bytes(),
                 &mut tables,
             );
+            let Some(uri) = Url::from_file_path(&path).ok() else {
+                continue;
+            };
+            let mut sites = Vec::new();
+            crate::analysis::df::collect_df_table_sites(
+                tree.root_node(),
+                contents.as_bytes(),
+                &mut sites,
+            );
+            for site in sites {
+                definitions.entry(site.name).or_default().push(Location {
+                    uri: uri.clone(),
+                    range: site.range,
+                });
+            }
+
+            let mut field_sites = Vec::new();
+            crate::analysis::df::collect_df_field_sites(
+                tree.root_node(),
+                contents.as_bytes(),
+                &mut field_sites,
+            );
+            for site in field_sites {
+                field_definitions
+                    .entry(site.name)
+                    .or_default()
+                    .push(Location {
+                        uri: uri.clone(),
+                        range: site.range,
+                    });
+            }
+
+            let mut index_sites = Vec::new();
+            crate::analysis::df::collect_df_index_sites(
+                tree.root_node(),
+                contents.as_bytes(),
+                &mut index_sites,
+            );
+            for site in index_sites {
+                index_definitions
+                    .entry(site.name)
+                    .or_default()
+                    .push(Location {
+                        uri: uri.clone(),
+                        range: site.range,
+                    });
+            }
         }
 
         self.db_tables.clear();
         for table in tables {
             self.db_tables.insert(table);
         }
+        *self.db_table_definitions.lock().await = definitions;
+        *self.db_field_definitions.lock().await = field_definitions;
+        *self.db_index_definitions.lock().await = index_definitions;
         debug!(
-            "loaded {} DB tables from configured dumpfile(s)",
-            self.db_tables.len()
+            "loaded schema from dumpfile(s): tables={}, fields={}, indexes={}",
+            self.db_tables.len(),
+            self.db_field_definitions.lock().await.len(),
+            self.db_index_definitions.lock().await.len()
         );
     }
 
