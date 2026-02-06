@@ -7,6 +7,46 @@ pub struct AblSymbol {
     pub detail: String,
 }
 
+fn completion_kind_for_node(node_kind: &str) -> Option<(CompletionItemKind, &'static str)> {
+    use CompletionItemKind as Kind;
+
+    let entry = match node_kind {
+        "variable_definition" | "parameter_definition" => (Kind::VARIABLE, "ABL variable"),
+        "function_definition" | "function_forward_definition" => (Kind::FUNCTION, "ABL function"),
+        "procedure_definition" | "procedure_forward_definition" => {
+            (Kind::FUNCTION, "ABL procedure")
+        }
+        "method_definition" => (Kind::METHOD, "ABL method"),
+        "constructor_definition" => (Kind::CONSTRUCTOR, "ABL constructor"),
+        "destructor_definition" => (Kind::METHOD, "ABL destructor"),
+        "class_definition" => (Kind::CLASS, "ABL class"),
+        "interface_definition" => (Kind::INTERFACE, "ABL interface"),
+        "property_definition" => (Kind::PROPERTY, "ABL property"),
+        "event_definition" => (Kind::EVENT, "ABL event"),
+        "buffer_definition" => (Kind::VARIABLE, "ABL buffer"),
+        "dataset_definition"
+        | "temp_table_definition"
+        | "work_table_definition"
+        | "workfile_definition"
+        | "query_definition"
+        | "data_source_definition" => (Kind::STRUCT, "ABL data definition"),
+        "stream_definition" => (Kind::VARIABLE, "ABL stream"),
+        "browse_definition"
+        | "button_definition"
+        | "frame_definition"
+        | "image_definition"
+        | "menu_definition"
+        | "submenu_definition"
+        | "rectangle_definition" => (Kind::VARIABLE, "ABL UI definition"),
+        _ if node_kind.ends_with("_definition") || node_kind.ends_with("_forward_definition") => {
+            (Kind::VARIABLE, "ABL definition")
+        }
+        _ => return None,
+    };
+
+    Some(entry)
+}
+
 /// Walks the syntax tree and extracts names from all ABL definition nodes.
 pub fn collect_definition_symbols(node: Node, src: &[u8], out: &mut Vec<AblSymbol>) {
     if let Some((kind, default_detail)) = completion_kind_for_node(node.kind()) {
@@ -71,46 +111,6 @@ fn find_first_identifier(
             find_first_identifier(ch, src, kind, detail, out);
         }
     }
-}
-
-fn completion_kind_for_node(node_kind: &str) -> Option<(CompletionItemKind, &'static str)> {
-    use CompletionItemKind as Kind;
-
-    let entry = match node_kind {
-        "variable_definition" | "parameter_definition" => (Kind::VARIABLE, "ABL variable"),
-        "function_definition" | "function_forward_definition" => (Kind::FUNCTION, "ABL function"),
-        "procedure_definition" | "procedure_forward_definition" => {
-            (Kind::FUNCTION, "ABL procedure")
-        }
-        "method_definition" => (Kind::METHOD, "ABL method"),
-        "constructor_definition" => (Kind::CONSTRUCTOR, "ABL constructor"),
-        "destructor_definition" => (Kind::METHOD, "ABL destructor"),
-        "class_definition" => (Kind::CLASS, "ABL class"),
-        "interface_definition" => (Kind::INTERFACE, "ABL interface"),
-        "property_definition" => (Kind::PROPERTY, "ABL property"),
-        "event_definition" => (Kind::EVENT, "ABL event"),
-        "buffer_definition" => (Kind::VARIABLE, "ABL buffer"),
-        "dataset_definition"
-        | "temp_table_definition"
-        | "work_table_definition"
-        | "workfile_definition"
-        | "query_definition"
-        | "data_source_definition" => (Kind::STRUCT, "ABL data definition"),
-        "stream_definition" => (Kind::VARIABLE, "ABL stream"),
-        "browse_definition"
-        | "button_definition"
-        | "frame_definition"
-        | "image_definition"
-        | "menu_definition"
-        | "submenu_definition"
-        | "rectangle_definition" => (Kind::VARIABLE, "ABL UI definition"),
-        _ if node_kind.ends_with("_definition") || node_kind.ends_with("_forward_definition") => {
-            (Kind::VARIABLE, "ABL definition")
-        }
-        _ => return None,
-    };
-
-    Some(entry)
 }
 
 fn symbol_detail(node: Node, src: &[u8], default_detail: &'static str) -> String {
