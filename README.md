@@ -2,12 +2,66 @@
 
 Language Server Protocol (LSP) implementation for ABL (OpenEdge Advanced Business Language).
 
-The language server is under development and currently provides a limited feature set.
+The language server is under development and supports parser-based language features for ABL and optional DB schema integration via `.df` dump files.
 
-## Features
+## Feature matrix
 
-- Syntax errors reported via LSP diagnostics
-- Variable definition autocompletion
+| Feature | Status | Notes |
+| --- | --- | --- |
+| Text sync | Implemented | `TextDocumentSyncKind::FULL` |
+| Parser diagnostics | Implemented | Tree-sitter syntax errors (`is_error` / `is_missing`) |
+| Semantic diagnostics: function arity | Implemented | Checks `function_call` argument count against known function definitions (current file + included `.i` files) |
+| Completion: local symbols | Implemented | Variables/definitions with case-insensitive prefix filtering |
+| Completion: DB tables | Implemented | Uses configured `.df` dump files |
+| Completion: DB fields after `table.` | Implemented | Supports table names and buffer aliases (`DEFINE BUFFER ... FOR ...`) |
+| Completion item details/docs | Implemented | Field type in `detail`; `LABEL` / `FORMAT` / `DESCRIPTION` in docs when available |
+| Go to Definition: local | Implemented | Local definitions |
+| Go to Definition: includes | Implemented | Scoped include-aware function definitions |
+| Go to Definition: DB schema | Implemented | Tables, fields, indexes from `.df`; buffer alias -> table definition |
+| Find References: DB table definitions | Implemented | Returns matching `ADD TABLE` locations from `.df` |
+| Hover: local symbols | Implemented | Type/detail hover |
+| Hover: functions | Implemented | Signature with parameters + return type, include-aware |
+| Hover: DB schema | Implemented | Table / field / index; field metadata includes type/label/format/description |
+| Semantic tokens | Implemented | Highlights DB table identifiers (`token type: type`) |
+| Rename | Not implemented | Returns `None` |
+| Formatting | Not implemented | Returns `None` |
+| References (general symbol refs) | Not implemented | Only DB table-definition lookup is implemented |
+
+## Configuration (`abl.toml`)
+
+The server searches for `abl.toml` in the opened workspace root.
+
+### Supported options
+
+```toml
+[completion]
+enabled = true
+
+[diagnostics]
+enabled = true
+
+# One dumpfile
+dumpfile = "database.df"
+
+# Or many dumpfiles
+# dumpfile = ["schema/core.df", "schema/custom.df"]
+```
+
+### Option reference
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `completion.enabled` | `bool` | `true` | Enables completion responses |
+| `diagnostics.enabled` | `bool` | `true` | Reserved config flag (currently parser diagnostics and semantic arity checks are active in server flow) |
+| `dumpfile` | `string \| string[]` | `[]` | Path(s) to `.df` dump files; relative paths resolve from workspace root |
+
+### Dumpfile behavior
+
+- `.df` files are parsed with `tree-sitter-df`.
+- Schema index includes tables, fields, and indexes.
+- Index reload is triggered when:
+  - `abl.toml` changes
+  - configured dumpfile is saved/changed
 
 ## License
 
@@ -34,4 +88,3 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
-
