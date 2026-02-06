@@ -4,6 +4,12 @@ Language Server Protocol (LSP) implementation for ABL (OpenEdge Advanced Busines
 
 The language server currently does not touch your files, it's strictly read-only, there should be no risk of file corruption.
 
+## Extensions 
+
+[zed-openedge-abl](https://github.com/usagi-coffee/zed-openedge-abl)
+
+[vscode-openedge-abl](https://github.com/usagi-coffee/vscode-openedge-abl)
+
 ## Features
 
 | Feature | Notes |
