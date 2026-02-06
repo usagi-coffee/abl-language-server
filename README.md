@@ -4,28 +4,25 @@ Language Server Protocol (LSP) implementation for ABL (OpenEdge Advanced Busines
 
 The language server is under development and supports parser-based language features for ABL and optional DB schema integration via `.df` dump files.
 
-## Feature matrix
+## Features
 
-| Feature | Status | Notes |
-| --- | --- | --- |
-| Text sync | Implemented | `TextDocumentSyncKind::FULL` |
-| Parser diagnostics | Implemented | Tree-sitter syntax errors (`is_error` / `is_missing`) |
-| Semantic diagnostics: function arity | Implemented | Checks `function_call` argument count against known function definitions (current file + included `.i` files) |
-| Completion: local symbols | Implemented | Variables/definitions with case-insensitive prefix filtering |
-| Completion: DB tables | Implemented | Uses configured `.df` dump files |
-| Completion: DB fields after `table.` | Implemented | Supports table names and buffer aliases (`DEFINE BUFFER ... FOR ...`) |
-| Completion item details/docs | Implemented | Field type in `detail`; `LABEL` / `FORMAT` / `DESCRIPTION` in docs when available |
-| Go to Definition: local | Implemented | Local definitions |
-| Go to Definition: includes | Implemented | Scoped include-aware function definitions |
-| Go to Definition: DB schema | Implemented | Tables, fields, indexes from `.df`; buffer alias -> table definition |
-| Find References: DB table definitions | Implemented | Returns matching `ADD TABLE` locations from `.df` |
-| Hover: local symbols | Implemented | Type/detail hover |
-| Hover: functions | Implemented | Signature with parameters + return type, include-aware |
-| Hover: DB schema | Implemented | Table / field / index; field metadata includes type/label/format/description |
-| Semantic tokens | Implemented | Highlights DB table identifiers (`token type: type`) |
-| Rename | Not implemented | Returns `None` |
-| Formatting | Not implemented | Returns `None` |
-| References (general symbol refs) | Not implemented | Only DB table-definition lookup is implemented |
+| Feature | Notes |
+| --- | --- |
+| Text sync | `TextDocumentSyncKind::FULL` |
+| Parser diagnostics | Tree-sitter syntax errors (`is_error` / `is_missing`) |
+| Semantic diagnostics: function arity | Checks `function_call` argument count against known function definitions (current file + included `.i` files) |
+| Completion: local symbols | Variables/definitions with case-insensitive prefix filtering |
+| Completion: DB tables | Uses configured `.df` dump files |
+| Completion: DB fields after `table.` | Supports table names and buffer aliases (`DEFINE BUFFER ... FOR ...`) |
+| Completion item details/docs | Field type in `detail`; `LABEL` / `FORMAT` / `DESCRIPTION` in docs when available |
+| Go to Definition: local | Local definitions |
+| Go to Definition: includes | Scoped include-aware function definitions |
+| Go to Definition: DB schema | Tables, fields, indexes from `.df`; buffer alias -> table definition |
+| Find References: DB table definitions | Returns matching `ADD TABLE` locations from `.df` |
+| Hover: local symbols | Type/detail hover |
+| Hover: functions | Signature with parameters + return type, include-aware |
+| Hover: DB schema | Table / field / index; field metadata includes type/label/format/description |
+| Semantic tokens | Highlights DB table identifiers (`token type: type`) |
 
 ## Configuration (`abl.toml`)
 
