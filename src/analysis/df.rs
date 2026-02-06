@@ -32,7 +32,7 @@ pub fn collect_df_table_sites(node: Node, src: &[u8], out: &mut Vec<DfTableSite>
         && let Some(name) = unquote(raw)
     {
         out.push(DfTableSite {
-            name: name.to_ascii_uppercase(),
+            name: name.to_string(),
             range: Range::new(
                 point_to_position(table_node.start_position()),
                 point_to_position(table_node.end_position()),
@@ -60,7 +60,7 @@ pub fn collect_df_field_sites(node: Node, src: &[u8], out: &mut Vec<DfFieldSite>
         && let Some(name) = unquote(raw)
     {
         out.push(DfFieldSite {
-            name: name.to_ascii_uppercase(),
+            name: name.to_string(),
             range: Range::new(
                 point_to_position(field_node.start_position()),
                 point_to_position(field_node.end_position()),
@@ -71,6 +71,72 @@ pub fn collect_df_field_sites(node: Node, src: &[u8], out: &mut Vec<DfFieldSite>
     for i in 0..node.child_count() {
         if let Some(ch) = node.child(i as u32) {
             collect_df_field_sites(ch, src, out);
+        }
+    }
+}
+
+pub struct DfTableField {
+    pub table: String,
+    pub field: String,
+    pub field_type: Option<String>,
+    pub format: Option<String>,
+    pub label: Option<String>,
+    pub description: Option<String>,
+}
+
+/// Collects `(table, field)` pairs from `ADD FIELD "field" OF "table" ...`.
+pub fn collect_df_table_fields(node: Node, src: &[u8], out: &mut Vec<DfTableField>) {
+    if node.kind() == "add_field_statement"
+        && let (Some(field_node), Some(table_node)) = (
+            node.child_by_field_name("field"),
+            node.child_by_field_name("table"),
+        )
+        && let (Ok(field_raw), Ok(table_raw)) =
+            (field_node.utf8_text(src), table_node.utf8_text(src))
+        && let (Some(field), Some(table)) = (unquote(field_raw), unquote(table_raw))
+    {
+        let field_type = node
+            .child_by_field_name("type")
+            .and_then(|t| t.utf8_text(src).ok())
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty());
+        let mut format = None;
+        let mut label = None;
+        let mut description = None;
+
+        for i in 0..node.child_count() {
+            let Some(ch) = node.child(i as u32) else {
+                continue;
+            };
+            if ch.kind() != "field_tuning" {
+                continue;
+            }
+            let Ok(raw) = ch.utf8_text(src) else {
+                continue;
+            };
+            let upper = raw.trim().to_ascii_uppercase();
+            if upper.starts_with("FORMAT ") {
+                format = extract_first_quoted(raw);
+            } else if upper.starts_with("LABEL ") {
+                label = extract_first_quoted(raw);
+            } else if upper.starts_with("DESCRIPTION ") {
+                description = extract_first_quoted(raw);
+            }
+        }
+
+        out.push(DfTableField {
+            table: table.to_string(),
+            field: field.to_string(),
+            field_type,
+            format,
+            label,
+            description,
+        });
+    }
+
+    for i in 0..node.child_count() {
+        if let Some(ch) = node.child(i as u32) {
+            collect_df_table_fields(ch, src, out);
         }
     }
 }
@@ -88,7 +154,7 @@ pub fn collect_df_index_sites(node: Node, src: &[u8], out: &mut Vec<DfIndexSite>
         && let Some(name) = unquote(raw)
     {
         out.push(DfIndexSite {
-            name: name.to_ascii_uppercase(),
+            name: name.to_string(),
             range: Range::new(
                 point_to_position(index_node.start_position()),
                 point_to_position(index_node.end_position()),
@@ -117,6 +183,31 @@ fn unquote(value: &str) -> Option<&str> {
 
 fn point_to_position(point: tree_sitter::Point) -> Position {
     Position::new(point.row as u32, point.column as u32)
+}
+
+fn extract_first_quoted(raw: &str) -> Option<String> {
+    let bytes = raw.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let quote = bytes[i];
+        if quote != b'"' && quote != b'\'' {
+            i += 1;
+            continue;
+        }
+        let start = i + 1;
+        let mut j = start;
+        while j < bytes.len() {
+            if bytes[j] == quote {
+                if let Some(s) = raw.get(start..j) {
+                    return Some(s.to_string());
+                }
+                return None;
+            }
+            j += 1;
+        }
+        break;
+    }
+    None
 }
 
 #[cfg(test)]
@@ -153,14 +244,26 @@ ADD INDEX "z9zw_idx" ON "z9zw_mstr"
 
         let mut table_sites = Vec::new();
         collect_df_table_sites(tree.root_node(), src.as_bytes(), &mut table_sites);
-        assert!(table_sites.iter().any(|s| s.name == "Z9ZW_MSTR"));
+        assert!(
+            table_sites
+                .iter()
+                .any(|s| s.name.eq_ignore_ascii_case("Z9ZW_MSTR"))
+        );
 
         let mut field_sites = Vec::new();
         collect_df_field_sites(tree.root_node(), src.as_bytes(), &mut field_sites);
-        assert!(field_sites.iter().any(|s| s.name == "Z9ZW_ID"));
+        assert!(
+            field_sites
+                .iter()
+                .any(|s| s.name.eq_ignore_ascii_case("Z9ZW_ID"))
+        );
 
         let mut index_sites = Vec::new();
         collect_df_index_sites(tree.root_node(), src.as_bytes(), &mut index_sites);
-        assert!(index_sites.iter().any(|s| s.name == "Z9ZW_IDX"));
+        assert!(
+            index_sites
+                .iter()
+                .any(|s| s.name.eq_ignore_ascii_case("Z9ZW_IDX"))
+        );
     }
 }

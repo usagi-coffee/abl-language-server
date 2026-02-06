@@ -11,6 +11,15 @@ use tree_sitter::{Parser, Tree};
 
 use crate::config::{AblConfig, find_workspace_root, load_from_workspace_root};
 
+#[derive(Clone)]
+pub struct DbFieldInfo {
+    pub name: String,
+    pub field_type: Option<String>,
+    pub format: Option<String>,
+    pub label: Option<String>,
+    pub description: Option<String>,
+}
+
 pub struct Backend {
     pub client: Client,
     pub parser: Mutex<Parser>,
@@ -20,9 +29,11 @@ pub struct Backend {
     pub workspace_root: Mutex<Option<std::path::PathBuf>>,
     pub config: Mutex<AblConfig>,
     pub db_tables: DashSet<String>,
+    pub db_table_labels: Mutex<HashMap<String, String>>,
     pub db_table_definitions: Mutex<HashMap<String, Vec<Location>>>,
     pub db_field_definitions: Mutex<HashMap<String, Vec<Location>>>,
     pub db_index_definitions: Mutex<HashMap<String, Vec<Location>>>,
+    pub db_fields_by_table: Mutex<HashMap<String, Vec<DbFieldInfo>>>,
 }
 
 #[tower_lsp::async_trait]
@@ -230,9 +241,11 @@ impl Backend {
 
     async fn reload_db_tables(&self, workspace_root: Option<&Path>, dumpfiles: &[String]) {
         let mut tables = HashSet::<String>::new();
+        let mut table_labels = HashMap::<String, String>::new();
         let mut definitions = HashMap::<String, Vec<Location>>::new();
         let mut field_definitions = HashMap::<String, Vec<Location>>::new();
         let mut index_definitions = HashMap::<String, Vec<Location>>::new();
+        let mut fields_by_table = HashMap::<String, Vec<DbFieldInfo>>::new();
         for dumpfile in dumpfiles {
             let Some(path) = resolve_dumpfile_path(workspace_root, dumpfile) else {
                 continue;
@@ -264,7 +277,10 @@ impl Backend {
                 &mut sites,
             );
             for site in sites {
-                definitions.entry(site.name).or_default().push(Location {
+                let key = site.name.to_ascii_uppercase();
+                tables.insert(key.clone());
+                table_labels.entry(key.clone()).or_insert(site.name);
+                definitions.entry(key).or_default().push(Location {
                     uri: uri.clone(),
                     range: site.range,
                 });
@@ -278,11 +294,30 @@ impl Backend {
             );
             for site in field_sites {
                 field_definitions
-                    .entry(site.name)
+                    .entry(site.name.to_ascii_uppercase())
                     .or_default()
                     .push(Location {
                         uri: uri.clone(),
                         range: site.range,
+                    });
+            }
+
+            let mut table_fields = Vec::new();
+            crate::analysis::df::collect_df_table_fields(
+                tree.root_node(),
+                contents.as_bytes(),
+                &mut table_fields,
+            );
+            for pair in table_fields {
+                fields_by_table
+                    .entry(pair.table.to_ascii_uppercase())
+                    .or_default()
+                    .push(DbFieldInfo {
+                        name: pair.field,
+                        field_type: pair.field_type,
+                        format: pair.format,
+                        label: pair.label,
+                        description: pair.description,
                     });
             }
 
@@ -294,7 +329,7 @@ impl Backend {
             );
             for site in index_sites {
                 index_definitions
-                    .entry(site.name)
+                    .entry(site.name.to_ascii_uppercase())
                     .or_default()
                     .push(Location {
                         uri: uri.clone(),
@@ -308,13 +343,25 @@ impl Backend {
             self.db_tables.insert(table);
         }
         *self.db_table_definitions.lock().await = definitions;
+        *self.db_table_labels.lock().await = table_labels;
         *self.db_field_definitions.lock().await = field_definitions;
         *self.db_index_definitions.lock().await = index_definitions;
+        for fields in fields_by_table.values_mut() {
+            fields.sort_by(|a, b| {
+                a.name
+                    .to_ascii_uppercase()
+                    .cmp(&b.name.to_ascii_uppercase())
+                    .then(a.name.cmp(&b.name))
+            });
+            fields.dedup_by(|a, b| a.name.eq_ignore_ascii_case(&b.name));
+        }
+        *self.db_fields_by_table.lock().await = fields_by_table;
         debug!(
-            "loaded schema from dumpfile(s): tables={}, fields={}, indexes={}",
+            "loaded schema from dumpfile(s): tables={}, fields={}, indexes={}, table_field_sets={}",
             self.db_tables.len(),
             self.db_field_definitions.lock().await.len(),
-            self.db_index_definitions.lock().await.len()
+            self.db_index_definitions.lock().await.len(),
+            self.db_fields_by_table.lock().await.len()
         );
     }
 
