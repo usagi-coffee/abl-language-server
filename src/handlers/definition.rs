@@ -1,3 +1,4 @@
+use crate::analysis::buffers::collect_buffer_mappings;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tower_lsp::jsonrpc::Result;
@@ -9,7 +10,9 @@ use crate::analysis::definitions::{
 };
 use crate::analysis::includes::collect_include_sites;
 use crate::backend::Backend;
-use crate::utils::position::{ascii_ident_at_or_before, lsp_pos_to_utf8_byte_offset};
+use crate::utils::position::{
+    ascii_ident_at_or_before, ascii_ident_or_dash_at_or_before, lsp_pos_to_utf8_byte_offset,
+};
 
 impl Backend {
     async fn resolve_include_location(
@@ -59,10 +62,50 @@ impl Backend {
             return Ok(Some(GotoDefinitionResponse::Scalar(location)));
         }
 
-        let symbol = match ascii_ident_at_or_before(&text, offset) {
+        let symbol = match ascii_ident_or_dash_at_or_before(&text, offset)
+            .or_else(|| ascii_ident_at_or_before(&text, offset))
+        {
             Some(s) => s,
             None => return Ok(None),
         };
+        let symbol_upper = normalize_lookup_key(&symbol);
+
+        // Buffer alias fallback: DEFINE BUFFER alias FOR table.
+        let mut buffer_mappings = Vec::new();
+        collect_buffer_mappings(tree.root_node(), text.as_bytes(), &mut buffer_mappings);
+        let mut buffer_before: Option<(usize, String)> = None;
+        let mut buffer_after: Option<(usize, String)> = None;
+        for mapping in buffer_mappings {
+            if !mapping.alias.eq_ignore_ascii_case(&symbol_upper) {
+                continue;
+            }
+            let table_key = normalize_lookup_key(&mapping.table);
+            if mapping.start_byte <= offset {
+                let should_take = buffer_before
+                    .as_ref()
+                    .map(|(start, _)| mapping.start_byte > *start)
+                    .unwrap_or(true);
+                if should_take {
+                    buffer_before = Some((mapping.start_byte, table_key));
+                }
+            } else {
+                let should_take = buffer_after
+                    .as_ref()
+                    .map(|(start, _)| mapping.start_byte < *start)
+                    .unwrap_or(true);
+                if should_take {
+                    buffer_after = Some((mapping.start_byte, table_key));
+                }
+            }
+        }
+        if let Some((_, table_key)) = buffer_before.or(buffer_after) {
+            let table_defs = self.db_table_definitions.lock().await;
+            if let Some(locations) = table_defs.get(&table_key)
+                && let Some(location) = pick_single_location(locations)
+            {
+                return Ok(Some(GotoDefinitionResponse::Scalar(location)));
+            }
+        }
 
         let mut sites = Vec::new();
         collect_definition_sites(tree.root_node(), text.as_bytes(), &mut sites);
@@ -194,7 +237,6 @@ impl Backend {
         }
 
         // Fallback: DB schema definitions parsed from configured .df dumpfile(s).
-        let symbol_upper = normalize_lookup_key(&symbol);
         let table_defs = self.db_table_definitions.lock().await;
         if let Some(locations) = table_defs.get(&symbol_upper)
             && let Some(location) = pick_single_location(locations)

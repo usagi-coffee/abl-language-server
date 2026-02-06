@@ -90,3 +90,37 @@ pub fn ascii_ident_at_or_before(text: &str, mut offset: usize) -> Option<String>
 
     Some(text[start..end].to_string())
 }
+
+/// Returns a symbol at offset allowing dashes inside the token.
+pub fn ascii_ident_or_dash_at_or_before(text: &str, mut offset: usize) -> Option<String> {
+    let bytes = text.as_bytes();
+    if bytes.is_empty() {
+        return None;
+    }
+
+    if offset > bytes.len() {
+        offset = bytes.len();
+    }
+
+    let is_ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'-';
+
+    let cursor = if offset < bytes.len() && is_ident(bytes[offset]) {
+        offset
+    } else if offset > 0 && is_ident(bytes[offset - 1]) {
+        offset - 1
+    } else {
+        return None;
+    };
+
+    let mut start = cursor;
+    while start > 0 && is_ident(bytes[start - 1]) {
+        start -= 1;
+    }
+
+    let mut end = cursor + 1;
+    while end < bytes.len() && is_ident(bytes[end]) {
+        end += 1;
+    }
+
+    Some(text[start..end].to_string())
+}
