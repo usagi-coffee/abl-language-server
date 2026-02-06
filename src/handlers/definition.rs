@@ -206,7 +206,7 @@ impl Backend {
 
                 let location = Location {
                     uri: include_uri.clone(),
-                    range: site.range.clone(),
+                    range: site.range,
                 };
 
                 if include.start_offset <= offset {
