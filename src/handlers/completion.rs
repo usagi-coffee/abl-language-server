@@ -1,4 +1,3 @@
-use log::debug;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 

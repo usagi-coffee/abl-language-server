@@ -6,12 +6,7 @@ use crate::handlers::diagnostics::on_change;
 
 impl Backend {
     pub async fn handle_did_open(&self, params: DidOpenTextDocumentParams) {
-        on_change(
-            self,
-            params.text_document.uri,
-            params.text_document.text,
-        )
-        .await;
+        on_change(self, params.text_document.uri, params.text_document.text).await;
         debug!("file opened!");
     }
 
@@ -25,7 +20,9 @@ impl Backend {
         debug!("changed!");
     }
 
-    pub async fn handle_did_save(&self, _params: DidSaveTextDocumentParams) {
+    pub async fn handle_did_save(&self, params: DidSaveTextDocumentParams) {
+        self.maybe_reload_config_for_uri(&params.text_document.uri)
+            .await;
         debug!("file saved!");
     }
 

@@ -4,10 +4,12 @@ use tower_lsp::{LspService, Server};
 
 mod analysis;
 mod backend;
+mod config;
 mod handlers;
 mod utils;
 
 use backend::Backend;
+use config::AblConfig;
 
 #[tokio::main]
 async fn main() {
@@ -27,6 +29,8 @@ async fn main() {
         docs: DashMap::new(),
         trees: DashMap::new(),
         parser: Mutex::new(parser),
+        workspace_root: Mutex::new(None),
+        config: Mutex::new(AblConfig::default()),
     })
     .finish();
 
