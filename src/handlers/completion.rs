@@ -2,7 +2,7 @@ use log::debug;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 
-use crate::analysis::variables::collect_variable_decls;
+use crate::analysis::definitions::collect_definition_symbols;
 use crate::backend::Backend;
 use crate::utils::position::{ascii_ident_prefix, lsp_pos_to_utf8_byte_offset};
 
@@ -11,8 +11,6 @@ impl Backend {
         &self,
         params: CompletionParams,
     ) -> Result<Option<CompletionResponse>> {
-        debug!("{:?}", params);
-
         let uri = params.text_document_position.text_document.uri;
         let pos = params.text_document_position.position;
 
@@ -32,22 +30,27 @@ impl Backend {
 
         let prefix = ascii_ident_prefix(&text, offset);
 
-        let mut vars = Vec::<String>::new();
-        collect_variable_decls(tree.root_node(), text.as_bytes(), &mut vars);
-        debug!("{:?}", vars);
+        let mut symbols = Vec::new();
+        collect_definition_symbols(tree.root_node(), text.as_bytes(), &mut symbols);
 
-        vars.sort();
-        vars.dedup();
+        symbols.sort_by(|a, b| {
+            a.label
+                .to_ascii_uppercase()
+                .cmp(&b.label.to_ascii_uppercase())
+                .then(a.label.cmp(&b.label))
+                .then(a.detail.cmp(&b.detail))
+        });
+        symbols.dedup_by(|a, b| a.label.eq_ignore_ascii_case(&b.label) && a.kind == b.kind);
 
         let pref_up = prefix.to_ascii_uppercase();
-        let items = vars
+        let items = symbols
             .into_iter()
-            .filter(|v| v.to_ascii_uppercase().starts_with(&pref_up))
-            .map(|v| CompletionItem {
-                label: v.clone(),
-                kind: Some(CompletionItemKind::VARIABLE),
-                detail: Some("CHARACTER".to_string()),
-                insert_text: Some(v),
+            .filter(|s| s.label.to_ascii_uppercase().starts_with(&pref_up))
+            .map(|s| CompletionItem {
+                label: s.label.clone(),
+                kind: Some(s.kind),
+                detail: Some(s.detail.to_string()),
+                insert_text: Some(s.label),
                 insert_text_format: Some(InsertTextFormat::PLAIN_TEXT),
                 ..Default::default()
             })
