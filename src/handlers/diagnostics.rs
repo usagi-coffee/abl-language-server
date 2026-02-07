@@ -218,7 +218,13 @@ fn collect_function_calls(node: Node<'_>, src: &[u8], out: &mut Vec<FunctionCall
 
 fn count_argument_nodes(arguments_node: Node<'_>) -> usize {
     let mut count = 0usize;
-    count_nodes_by_kind(arguments_node, "argument", &mut count);
+    for i in 0..arguments_node.child_count() {
+        if let Some(ch) = arguments_node.child(i as u32)
+            && ch.kind() == "argument"
+        {
+            count += 1;
+        }
+    }
     count
 }
 
@@ -323,5 +329,33 @@ x = foo().
             .map(|c| c.arg_count)
             .collect::<Vec<_>>();
         assert_eq!(foo_calls, vec![2, 0]);
+    }
+
+    #[test]
+    fn counts_nested_function_call_as_single_argument() {
+        let src = r#"
+FUNCTION foo RETURNS LOGICAL (INPUT p1 AS INTEGER):
+  RETURN TRUE.
+END FUNCTION.
+
+DEFINE VARIABLE y AS LOGICAL NO-UNDO.
+DEFINE VARIABLE pzd_linia AS CHARACTER NO-UNDO.
+y = foo(INTEGER(pzd_linia)).
+"#;
+
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_abl::LANGUAGE.into())
+            .expect("set abl language");
+        let tree = parser.parse(src, None).expect("parse source");
+
+        let mut calls = Vec::new();
+        collect_function_calls(tree.root_node(), src.as_bytes(), &mut calls);
+        let foo_calls = calls
+            .into_iter()
+            .filter(|c| c.name_upper == "FOO")
+            .map(|c| c.arg_count)
+            .collect::<Vec<_>>();
+        assert_eq!(foo_calls, vec![1]);
     }
 }
