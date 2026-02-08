@@ -291,7 +291,6 @@ fn is_scope_node(kind: &str) -> bool {
         "function_definition"
             | "function_forward_definition"
             | "procedure_definition"
-            | "procedure_forward_definition"
             | "method_definition"
             | "constructor_definition"
             | "destructor_definition"

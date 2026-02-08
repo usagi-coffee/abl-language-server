@@ -19,9 +19,7 @@ fn completion_kind_for_node(node_kind: &str) -> Option<(CompletionItemKind, &'st
     let entry = match node_kind {
         "variable_definition" | "parameter_definition" => (Kind::VARIABLE, "ABL variable"),
         "function_definition" | "function_forward_definition" => (Kind::FUNCTION, "ABL function"),
-        "procedure_definition" | "procedure_forward_definition" => {
-            (Kind::FUNCTION, "ABL procedure")
-        }
+        "procedure_definition" => (Kind::FUNCTION, "ABL procedure"),
         "method_definition" => (Kind::METHOD, "ABL method"),
         "constructor_definition" => (Kind::CONSTRUCTOR, "ABL constructor"),
         "destructor_definition" => (Kind::METHOD, "ABL destructor"),
