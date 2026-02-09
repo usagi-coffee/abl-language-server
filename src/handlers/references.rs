@@ -27,8 +27,11 @@ impl Backend {
             None => return Ok(None),
         };
 
-        let index = self.db_table_definitions.lock().await;
-        let locations = index.get(&symbol).cloned().unwrap_or_default();
+        let locations = self
+            .db_table_definitions
+            .get(&symbol)
+            .map(|entry| entry.value().clone())
+            .unwrap_or_default();
         if locations.is_empty() {
             Ok(None)
         } else {

@@ -68,12 +68,7 @@ impl Backend {
             let qualifier_upper = qualifier.to_ascii_uppercase();
             let mut table_upper = Some(qualifier_upper.clone());
 
-            if !self
-                .db_fields_by_table
-                .lock()
-                .await
-                .contains_key(&qualifier_upper)
-            {
+            if !self.db_fields_by_table.contains_key(&qualifier_upper) {
                 let mut mappings = Vec::new();
                 collect_buffer_mappings(tree.root_node(), text.as_bytes(), &mut mappings);
                 table_upper = mappings
@@ -83,8 +78,7 @@ impl Backend {
             }
 
             if let Some(table_key) = table_upper {
-                let fields_map = self.db_fields_by_table.lock().await;
-                let fields = lookup_case_insensitive_fields(&fields_map, &table_key);
+                let fields = lookup_case_insensitive_fields(&self.db_fields_by_table, &table_key);
                 if let Some(fields) = fields {
                     let pref_up = field_prefix.to_ascii_uppercase();
                     let mut items = fields
@@ -122,11 +116,11 @@ impl Backend {
             detail: s.detail,
         }));
 
-        let table_labels = self.db_table_labels.lock().await;
+        let table_labels = &self.db_table_labels;
         candidates.extend(
             table_labels
-                .values()
-                .cloned()
+                .iter()
+                .map(|entry| entry.value().clone())
                 .map(|label| CompletionCandidate {
                     label,
                     kind: CompletionItemKind::STRUCT,
@@ -188,19 +182,21 @@ fn qualifier_before_dot(text: &str, offset: usize, prefix: &str) -> Option<Strin
     Some(text[start..dot_pos].to_string())
 }
 
-fn lookup_case_insensitive_fields<'a>(
-    map: &'a std::collections::HashMap<String, Vec<DbFieldInfo>>,
+fn lookup_case_insensitive_fields(
+    map: &dashmap::DashMap<String, Vec<DbFieldInfo>>,
     key: &str,
-) -> Option<&'a Vec<DbFieldInfo>> {
-    map.get(key).or_else(|| {
-        map.iter().find_map(|(name, fields)| {
-            if name.eq_ignore_ascii_case(key) {
-                Some(fields)
-            } else {
-                None
-            }
+) -> Option<Vec<DbFieldInfo>> {
+    map.get(key)
+        .map(|fields| fields.value().clone())
+        .or_else(|| {
+            map.iter().find_map(|entry| {
+                if entry.key().eq_ignore_ascii_case(key) {
+                    Some(entry.value().clone())
+                } else {
+                    None
+                }
+            })
         })
-    })
 }
 
 fn text_has_dot_before_cursor(text: &str, offset: usize) -> bool {

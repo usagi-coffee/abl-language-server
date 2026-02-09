@@ -90,11 +90,9 @@ impl Backend {
             ))));
         }
 
-        let table_defs = self.db_table_definitions.lock().await;
-        if has_schema_key(&table_defs, &symbol_upper) {
+        if has_schema_key(&self.db_table_definitions, &symbol_upper) {
             return Ok(Some(markdown_hover(format!("**DB Table** `{}`", symbol))));
         }
-        drop(table_defs);
 
         let field_matches = self.find_db_field_matches(&symbol_upper).await;
         if !field_matches.is_empty() {
@@ -134,8 +132,7 @@ impl Backend {
             ))));
         }
 
-        let index_defs = self.db_index_definitions.lock().await;
-        if has_schema_key(&index_defs, &symbol_upper) {
+        if has_schema_key(&self.db_index_definitions, &symbol_upper) {
             return Ok(Some(markdown_hover(format!("**DB Index** `{}`", symbol))));
         }
 
@@ -143,9 +140,10 @@ impl Backend {
     }
 
     async fn find_db_field_matches(&self, field_upper: &str) -> Vec<DbFieldMatch> {
-        let fields_by_table = self.db_fields_by_table.lock().await;
         let mut out = Vec::new();
-        for (table, fields) in fields_by_table.iter() {
+        for entry in self.db_fields_by_table.iter() {
+            let table = entry.key();
+            let fields = entry.value();
             for field in fields {
                 if field.name.eq_ignore_ascii_case(field_upper) {
                     out.push(DbFieldMatch {
@@ -255,8 +253,11 @@ fn symbol_at_offset(root: Node<'_>, text: &str, offset: usize) -> Option<String>
     None
 }
 
-fn has_schema_key(map: &std::collections::HashMap<String, Vec<Location>>, key_upper: &str) -> bool {
-    map.contains_key(key_upper) || map.keys().any(|k| k.eq_ignore_ascii_case(key_upper))
+fn has_schema_key(map: &dashmap::DashMap<String, Vec<Location>>, key_upper: &str) -> bool {
+    map.contains_key(key_upper)
+        || map
+            .iter()
+            .any(|entry| entry.key().eq_ignore_ascii_case(key_upper))
 }
 
 struct FunctionSignature {

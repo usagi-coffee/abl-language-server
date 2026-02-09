@@ -29,11 +29,11 @@ pub struct Backend {
     pub workspace_root: Mutex<Option<std::path::PathBuf>>,
     pub config: Mutex<AblConfig>,
     pub db_tables: DashSet<String>,
-    pub db_table_labels: Mutex<HashMap<String, String>>,
-    pub db_table_definitions: Mutex<HashMap<String, Vec<Location>>>,
-    pub db_field_definitions: Mutex<HashMap<String, Vec<Location>>>,
-    pub db_index_definitions: Mutex<HashMap<String, Vec<Location>>>,
-    pub db_fields_by_table: Mutex<HashMap<String, Vec<DbFieldInfo>>>,
+    pub db_table_labels: DashMap<String, String>,
+    pub db_table_definitions: DashMap<String, Vec<Location>>,
+    pub db_field_definitions: DashMap<String, Vec<Location>>,
+    pub db_index_definitions: DashMap<String, Vec<Location>>,
+    pub db_fields_by_table: DashMap<String, Vec<DbFieldInfo>>,
 }
 
 #[tower_lsp::async_trait]
@@ -357,10 +357,22 @@ impl Backend {
         for table in tables {
             self.db_tables.insert(table);
         }
-        *self.db_table_definitions.lock().await = definitions;
-        *self.db_table_labels.lock().await = table_labels;
-        *self.db_field_definitions.lock().await = field_definitions;
-        *self.db_index_definitions.lock().await = index_definitions;
+        self.db_table_definitions.clear();
+        for (k, v) in definitions {
+            self.db_table_definitions.insert(k, v);
+        }
+        self.db_table_labels.clear();
+        for (k, v) in table_labels {
+            self.db_table_labels.insert(k, v);
+        }
+        self.db_field_definitions.clear();
+        for (k, v) in field_definitions {
+            self.db_field_definitions.insert(k, v);
+        }
+        self.db_index_definitions.clear();
+        for (k, v) in index_definitions {
+            self.db_index_definitions.insert(k, v);
+        }
         for fields in fields_by_table.values_mut() {
             fields.sort_by(|a, b| {
                 a.name
@@ -370,13 +382,16 @@ impl Backend {
             });
             fields.dedup_by(|a, b| a.name.eq_ignore_ascii_case(&b.name));
         }
-        *self.db_fields_by_table.lock().await = fields_by_table;
+        self.db_fields_by_table.clear();
+        for (k, v) in fields_by_table {
+            self.db_fields_by_table.insert(k, v);
+        }
         debug!(
             "loaded schema from dumpfile(s): tables={}, fields={}, indexes={}, table_field_sets={}",
             self.db_tables.len(),
-            self.db_field_definitions.lock().await.len(),
-            self.db_index_definitions.lock().await.len(),
-            self.db_fields_by_table.lock().await.len()
+            self.db_field_definitions.len(),
+            self.db_index_definitions.len(),
+            self.db_fields_by_table.len()
         );
     }
 
