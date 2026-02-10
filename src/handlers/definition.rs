@@ -9,6 +9,7 @@ use crate::analysis::definitions::{
 };
 use crate::analysis::includes::collect_include_sites;
 use crate::analysis::schema::normalize_lookup_key;
+use crate::analysis::schema_lookup::{lookup_schema_location, pick_single_location};
 use crate::analysis::scopes::containing_scope;
 use crate::backend::Backend;
 use crate::utils::position::{
@@ -251,33 +252,4 @@ impl Backend {
 
         Ok(None)
     }
-}
-
-fn pick_single_location(locations: &[Location]) -> Option<Location> {
-    locations.iter().cloned().min_by(|a, b| {
-        a.uri
-            .as_str()
-            .cmp(b.uri.as_str())
-            .then(a.range.start.line.cmp(&b.range.start.line))
-            .then(a.range.start.character.cmp(&b.range.start.character))
-    })
-}
-
-fn lookup_schema_location(
-    defs: &dashmap::DashMap<String, Vec<Location>>,
-    symbol_upper: &str,
-) -> Option<Location> {
-    if let Some(locations) = defs.get(symbol_upper)
-        && let Some(location) = pick_single_location(locations.value())
-    {
-        return Some(location);
-    }
-
-    defs.iter().find_map(|entry| {
-        if entry.key().eq_ignore_ascii_case(symbol_upper) {
-            pick_single_location(entry.value())
-        } else {
-            None
-        }
-    })
 }

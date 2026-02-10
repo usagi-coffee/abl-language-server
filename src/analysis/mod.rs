@@ -1,6 +1,9 @@
 pub mod buffers;
+pub mod completion;
 pub mod definitions;
 pub mod df;
+pub mod functions;
 pub mod includes;
 pub mod schema;
+pub mod schema_lookup;
 pub mod scopes;

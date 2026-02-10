@@ -1,0 +1,16 @@
+ADD TABLE "z9zw_mstr"
+  AREA "Schema Area"
+
+ADD FIELD "z9zw_id" OF "z9zw_mstr" AS CHARACTER
+  FORMAT "x(24)"
+  LABEL "ID"
+  DESCRIPTION "Primary identifier"
+
+ADD FIELD "z9zw_name" OF "z9zw_mstr" AS CHARACTER
+  FORMAT "x(40)"
+  LABEL "Name"
+  DESCRIPTION "Display name"
+
+ADD INDEX "z9zw_idx" ON "z9zw_mstr"
+  UNIQUE
+.

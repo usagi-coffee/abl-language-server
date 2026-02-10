@@ -1,0 +1,2 @@
+propath = ['./playground', './playground/propath']
+dumpfile = ['./playground/schema.df']

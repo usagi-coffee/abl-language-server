@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use tower_lsp::lsp_types::*;
 use tree_sitter::Node;
 
+use crate::analysis::functions::normalize_function_name;
 use crate::analysis::includes::collect_include_sites;
 use crate::backend::Backend;
 use crate::utils::ts::{count_nodes_by_kind, direct_child_by_kind, node_to_range};
@@ -216,14 +217,6 @@ fn count_argument_nodes(arguments_node: Node<'_>) -> usize {
         }
     }
     count
-}
-
-fn normalize_function_name(name: &str) -> String {
-    name.split(|c: char| c == '.' || c == ':' || c.is_whitespace())
-        .next_back()
-        .unwrap_or(name)
-        .trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '_' && c != '-')
-        .to_ascii_uppercase()
 }
 
 struct FunctionCallSite {
