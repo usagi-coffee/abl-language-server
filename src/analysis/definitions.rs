@@ -1,6 +1,8 @@
 use tower_lsp::lsp_types::{CompletionItemKind, Position, Range};
 use tree_sitter::Node;
 
+use crate::utils::ts::{first_descendant_by_kind, node_trimmed_text};
+
 pub struct AblSymbol {
     pub label: String,
     pub kind: CompletionItemKind,
@@ -57,9 +59,9 @@ pub fn collect_definition_symbols(node: Node, src: &[u8], out: &mut Vec<AblSymbo
         let detail = symbol_detail(node, src, default_detail);
         if let Some(name) = node.child_by_field_name("name") {
             push_symbol(name, src, kind, &detail, out);
-        } else {
+        } else if let Some(name) = first_descendant_by_kind(node, "identifier") {
             // Fallback for definitions without a named "name" field in older grammars.
-            find_first_identifier(node, src, kind, &detail, out);
+            push_symbol(name, src, kind, &detail, out);
         }
     }
 
@@ -75,8 +77,8 @@ pub fn collect_definition_sites(node: Node, src: &[u8], out: &mut Vec<AblDefinit
     if completion_kind_for_node(node.kind()).is_some() {
         if let Some(name) = node.child_by_field_name("name") {
             push_site(name, src, out);
-        } else {
-            find_first_identifier_site(node, src, out);
+        } else if let Some(name) = first_descendant_by_kind(node, "identifier") {
+            push_site(name, src, out);
         }
     }
 
@@ -92,8 +94,8 @@ pub fn collect_function_definition_sites(node: Node, src: &[u8], out: &mut Vec<A
     if is_function_definition_node(node.kind()) {
         if let Some(name) = node.child_by_field_name("name") {
             push_site(name, src, out);
-        } else {
-            find_first_identifier_site(node, src, out);
+        } else if let Some(name) = first_descendant_by_kind(node, "identifier") {
+            push_site(name, src, out);
         }
     }
 
@@ -111,72 +113,25 @@ fn push_symbol(
     detail: &str,
     out: &mut Vec<AblSymbol>,
 ) {
-    if let Ok(name) = name_node.utf8_text(src) {
-        let label = name.trim();
-        if !label.is_empty() {
-            out.push(AblSymbol {
-                label: label.to_string(),
-                kind,
-                detail: detail.to_string(),
-            });
-        }
-    }
-}
-
-fn find_first_identifier(
-    node: Node,
-    src: &[u8],
-    kind: CompletionItemKind,
-    detail: &str,
-    out: &mut Vec<AblSymbol>,
-) {
-    if node.kind() == "identifier" {
-        if let Ok(name) = node.utf8_text(src) {
-            let label = name.trim();
-            if !label.is_empty() {
-                out.push(AblSymbol {
-                    label: label.to_string(),
-                    kind,
-                    detail: detail.to_string(),
-                });
-            }
-        }
-        return;
-    }
-
-    for i in 0..node.child_count() {
-        if let Some(ch) = node.child(i as u32) {
-            find_first_identifier(ch, src, kind, detail, out);
-        }
+    if let Some(label) = node_trimmed_text(name_node, src) {
+        out.push(AblSymbol {
+            label,
+            kind,
+            detail: detail.to_string(),
+        });
     }
 }
 
 fn push_site(name_node: Node, src: &[u8], out: &mut Vec<AblDefinitionSite>) {
-    if let Ok(name) = name_node.utf8_text(src) {
-        let label = name.trim();
-        if !label.is_empty() {
-            out.push(AblDefinitionSite {
-                label: label.to_string(),
-                range: Range::new(
-                    point_to_position(name_node.start_position()),
-                    point_to_position(name_node.end_position()),
-                ),
-                start_byte: name_node.start_byte(),
-            });
-        }
-    }
-}
-
-fn find_first_identifier_site(node: Node, src: &[u8], out: &mut Vec<AblDefinitionSite>) {
-    if node.kind() == "identifier" {
-        push_site(node, src, out);
-        return;
-    }
-
-    for i in 0..node.child_count() {
-        if let Some(ch) = node.child(i as u32) {
-            find_first_identifier_site(ch, src, out);
-        }
+    if let Some(label) = node_trimmed_text(name_node, src) {
+        out.push(AblDefinitionSite {
+            label,
+            range: Range::new(
+                point_to_position(name_node.start_position()),
+                point_to_position(name_node.end_position()),
+            ),
+            start_byte: name_node.start_byte(),
+        });
     }
 }
 

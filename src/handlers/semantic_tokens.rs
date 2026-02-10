@@ -3,6 +3,7 @@ use tower_lsp::lsp_types::*;
 use tree_sitter::Node;
 
 use crate::backend::Backend;
+use crate::utils::ts::collect_nodes_by_kind;
 
 const TABLE_TOKEN_TYPE_INDEX: u32 = 0;
 
@@ -46,7 +47,7 @@ impl Backend {
         };
 
         let mut nodes = Vec::<Node>::new();
-        collect_identifier_nodes(tree.root_node(), &mut nodes);
+        collect_nodes_by_kind(tree.root_node(), "identifier", &mut nodes);
 
         let tables: std::collections::HashSet<String> =
             self.db_tables.iter().map(|v| v.key().clone()).collect();
@@ -102,17 +103,6 @@ impl Backend {
         }
 
         out
-    }
-}
-
-fn collect_identifier_nodes<'a>(node: Node<'a>, out: &mut Vec<Node<'a>>) {
-    if node.kind() == "identifier" {
-        out.push(node);
-    }
-    for i in 0..node.child_count() {
-        if let Some(ch) = node.child(i as u32) {
-            collect_identifier_nodes(ch, out);
-        }
     }
 }
 

@@ -10,6 +10,7 @@ use crate::backend::Backend;
 use crate::utils::position::{
     ascii_ident_at_or_before, ascii_ident_or_dash_at_or_before, lsp_pos_to_utf8_byte_offset,
 };
+use crate::utils::ts::{direct_child_by_kind, node_trimmed_text};
 
 impl Backend {
     pub async fn handle_hover(&self, params: HoverParams) -> Result<Option<Hover>> {
@@ -232,25 +233,10 @@ fn normalize_lookup_key(symbol: &str) -> String {
 fn symbol_at_offset(root: Node<'_>, text: &str, offset: usize) -> Option<String> {
     let node = root.named_descendant_for_byte_range(offset, offset)?;
     if node.kind() == "identifier" {
-        return node
-            .utf8_text(text.as_bytes())
-            .ok()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty());
+        return node_trimmed_text(node, text.as_bytes());
     }
 
-    for i in 0..node.child_count() {
-        if let Some(ch) = node.child(i as u32)
-            && ch.kind() == "identifier"
-        {
-            return ch
-                .utf8_text(text.as_bytes())
-                .ok()
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty());
-        }
-    }
-    None
+    direct_child_by_kind(node, "identifier").and_then(|n| node_trimmed_text(n, text.as_bytes()))
 }
 
 fn has_schema_key(map: &dashmap::DashMap<String, Vec<Location>>, key_upper: &str) -> bool {
@@ -309,7 +295,7 @@ fn collect_function_signatures(
 }
 
 fn collect_function_params(function_node: Node, src: &[u8]) -> Vec<String> {
-    if let Some(parameters_node) = find_child_by_kind(function_node, "parameters") {
+    if let Some(parameters_node) = direct_child_by_kind(function_node, "parameters") {
         let mut header_params = Vec::new();
         collect_params_by_kind(parameters_node, src, "parameter", &mut header_params);
         if !header_params.is_empty() {
@@ -364,17 +350,6 @@ fn collect_params_by_kind(node: Node, src: &[u8], target_kind: &str, out: &mut V
             collect_params_by_kind(ch, src, target_kind, out);
         }
     }
-}
-
-fn find_child_by_kind<'a>(node: Node<'a>, kind: &str) -> Option<Node<'a>> {
-    for i in 0..node.child_count() {
-        if let Some(ch) = node.child(i as u32)
-            && ch.kind() == kind
-        {
-            return Some(ch);
-        }
-    }
-    None
 }
 
 fn render_param(node: Node, src: &[u8]) -> Option<String> {

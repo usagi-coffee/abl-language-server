@@ -6,6 +6,7 @@ use tree_sitter::Node;
 
 use crate::analysis::includes::collect_include_sites;
 use crate::backend::Backend;
+use crate::utils::ts::direct_child_by_kind;
 
 pub async fn on_change(backend: &Backend, uri: Url, text: String) {
     backend.docs.insert(uri.clone(), text.to_owned());
@@ -134,7 +135,7 @@ fn collect_function_arities(node: Node<'_>, src: &[u8], out: &mut HashMap<String
 }
 
 fn function_param_count(function_node: Node<'_>, src: &[u8]) -> usize {
-    if let Some(parameters_node) = find_child_by_kind(function_node, "parameters") {
+    if let Some(parameters_node) = direct_child_by_kind(function_node, "parameters") {
         let mut count = 0usize;
         count_nodes_by_kind(parameters_node, "parameter", &mut count);
         if count > 0 {
@@ -236,17 +237,6 @@ fn count_nodes_by_kind(node: Node<'_>, kind: &str, out: &mut usize) {
             count_nodes_by_kind(ch, kind, out);
         }
     }
-}
-
-fn find_child_by_kind<'a>(node: Node<'a>, kind: &str) -> Option<Node<'a>> {
-    for i in 0..node.child_count() {
-        if let Some(ch) = node.child(i as u32)
-            && ch.kind() == kind
-        {
-            return Some(ch);
-        }
-    }
-    None
 }
 
 fn normalize_function_name(name: &str) -> String {
