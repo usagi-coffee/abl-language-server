@@ -100,13 +100,12 @@ impl Backend {
                 }
             }
         }
-        if let Some((_, table_key)) = buffer_before.or(buffer_after) {
-            if let Some(locations) = self.db_table_definitions.get(&table_key)
+        if let Some((_, table_key)) = buffer_before.or(buffer_after)
+            && let Some(locations) = self.db_table_definitions.get(&table_key)
                 && let Some(location) = pick_single_location(locations.value())
             {
                 return Ok(Some(GotoDefinitionResponse::Scalar(location)));
             }
-        }
 
         let mut sites = Vec::new();
         collect_definition_sites(tree.root_node(), text.as_bytes(), &mut sites);
