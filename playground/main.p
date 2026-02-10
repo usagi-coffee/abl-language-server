@@ -9,10 +9,10 @@ FUNCTION local_mul RETURNS INTEGER (INPUT p_a AS INTEGER, INPUT p_b AS INTEGER):
   RETURN p_a * p_b.
 END FUNCTION.
 
-
 // We should not be able to get completion before the definitions
 // lv_
 
+// After these we shuold be able to autcomplete them
 DEFINE VARIABLE lv_before AS CHARACTER NO-UNDO.
 DEFINE VARIABLE lv_counter AS INTEGER NO-UNDO.
 DEFINE VARIABLE lv_name AS CHARACTER NO-UNDO.
@@ -37,7 +37,7 @@ MESSAGE "index name" z9zw_mstr.z9zw_name VIEW-AS ALERT-BOX INFO BUTTONS OK.
 lv_counter = inc_plus(lv_counter).
 lv_counter = inc_minus(lv_counter).
 
-/* Diagnostics test: wrong arity should produce an error diagnostic. */
+// Wrong arity should produce an error diagnostic.
 lv_counter = local_mul(lv_counter).
-lv_counter = inc_plus(lv_counter, ?).
+lv_counter = inc_plus(lv_counter, INTEGER(1)).
 lv_counter = inc_minus(lv_counter, ?).

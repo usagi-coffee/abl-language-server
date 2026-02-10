@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 
@@ -7,6 +9,7 @@ use crate::analysis::completion::{
     text_has_dot_before_cursor,
 };
 use crate::analysis::definitions::collect_definition_symbols;
+use crate::analysis::includes::collect_include_sites;
 use crate::backend::Backend;
 use crate::utils::position::{ascii_ident_prefix, lsp_pos_to_utf8_byte_offset};
 
@@ -35,11 +38,11 @@ impl Backend {
         }
 
         let text = match self.docs.get(&uri) {
-            Some(t) => t,
+            Some(t) => t.value().clone(),
             None => return Ok(Some(CompletionResponse::Array(vec![]))),
         };
         let tree = match self.trees.get(&uri) {
-            Some(t) => t,
+            Some(t) => t.value().clone(),
             None => return Ok(Some(CompletionResponse::Array(vec![]))),
         };
 
@@ -127,6 +130,10 @@ impl Backend {
                     detail: s.detail,
                 }),
         );
+        candidates.extend(
+            self.collect_symbols_from_includes_for_completion(&uri, &text, offset)
+                .await,
+        );
 
         let table_labels = &self.db_table_labels;
         candidates.extend(
@@ -164,5 +171,65 @@ impl Backend {
             .collect::<Vec<_>>();
 
         Ok(Some(CompletionResponse::Array(items)))
+    }
+
+    async fn collect_symbols_from_includes_for_completion(
+        &self,
+        uri: &Url,
+        text: &str,
+        offset: usize,
+    ) -> Vec<CompletionCandidate> {
+        if !text.as_bytes().contains(&b'{') {
+            return Vec::new();
+        }
+
+        let Some(current_path) = uri.to_file_path().ok() else {
+            return Vec::new();
+        };
+
+        let include_sites = collect_include_sites(text);
+        let mut parsed_files = HashSet::new();
+        let mut out = Vec::new();
+
+        for include in include_sites {
+            if include.start_offset > offset {
+                continue;
+            }
+
+            let Some(include_path) = self
+                .resolve_include_path_for(&current_path, &include.path)
+                .await
+            else {
+                continue;
+            };
+            if !parsed_files.insert(include_path.clone()) {
+                continue;
+            }
+
+            let Ok(include_text) = tokio::fs::read_to_string(&include_path).await else {
+                continue;
+            };
+            let include_tree = {
+                let mut parser = self.parser.lock().await;
+                parser.parse(&include_text, None)
+            };
+            let Some(include_tree) = include_tree else {
+                continue;
+            };
+
+            let mut symbols = Vec::new();
+            collect_definition_symbols(
+                include_tree.root_node(),
+                include_text.as_bytes(),
+                &mut symbols,
+            );
+            out.extend(symbols.into_iter().map(|s| CompletionCandidate {
+                label: s.label,
+                kind: s.kind,
+                detail: s.detail,
+            }));
+        }
+
+        out
     }
 }
