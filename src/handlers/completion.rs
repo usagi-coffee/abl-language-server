@@ -105,6 +105,9 @@ impl Backend {
                 }
             }
         }
+        if trigger_is_dot {
+            return Ok(Some(CompletionResponse::Array(vec![])));
+        }
 
         let mut candidates = Vec::<CompletionCandidate>::new();
 
