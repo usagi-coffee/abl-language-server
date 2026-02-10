@@ -113,11 +113,16 @@ impl Backend {
 
         let mut symbols = Vec::new();
         collect_definition_symbols(tree.root_node(), text.as_bytes(), &mut symbols);
-        candidates.extend(symbols.into_iter().map(|s| CompletionCandidate {
-            label: s.label,
-            kind: s.kind,
-            detail: s.detail,
-        }));
+        candidates.extend(
+            symbols
+                .into_iter()
+                .filter(|s| s.start_byte <= offset)
+                .map(|s| CompletionCandidate {
+                    label: s.label,
+                    kind: s.kind,
+                    detail: s.detail,
+                }),
+        );
 
         let table_labels = &self.db_table_labels;
         candidates.extend(

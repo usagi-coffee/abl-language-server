@@ -7,6 +7,7 @@ pub struct AblSymbol {
     pub label: String,
     pub kind: CompletionItemKind,
     pub detail: String,
+    pub start_byte: usize,
 }
 
 pub struct AblDefinitionSite {
@@ -118,6 +119,7 @@ fn push_symbol(
             label,
             kind,
             detail: detail.to_string(),
+            start_byte: name_node.start_byte(),
         });
     }
 }
