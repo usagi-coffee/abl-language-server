@@ -13,6 +13,6 @@ dashmap = "6.1.0"
 log = "0.4.14"
 anyhow = "1.0.93"
 tree-sitter = "0.26.3"
-tree-sitter-abl = { git = "https://github.com/usagi-coffee/tree-sitter-abl", rev = '473bcd1df9ad7250ca01a40376cb004c9f450d54' }
+tree-sitter-abl = { git = "https://github.com/usagi-coffee/tree-sitter-abl", rev = "a95be5de6c210cd51adf4b956075a8d2e2a472de" }
 tree-sitter-df = { git = "https://github.com/usagi-coffee/tree-sitter-df" }
 toml = "0.8"
