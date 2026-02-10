@@ -3,12 +3,13 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
-use tree_sitter::Node;
 
 use crate::analysis::definitions::{
     AblDefinitionSite, collect_definition_sites, collect_function_definition_sites,
 };
 use crate::analysis::includes::collect_include_sites;
+use crate::analysis::schema::normalize_lookup_key;
+use crate::analysis::scopes::containing_scope;
 use crate::backend::Backend;
 use crate::utils::position::{
     ascii_ident_at_or_before, ascii_ident_or_dash_at_or_before, lsp_pos_to_utf8_byte_offset,
@@ -68,7 +69,7 @@ impl Backend {
             Some(s) => s,
             None => return Ok(None),
         };
-        let symbol_upper = normalize_lookup_key(&symbol);
+        let symbol_upper = normalize_lookup_key(&symbol, false);
 
         // Buffer alias fallback: DEFINE BUFFER alias FOR table.
         let mut buffer_mappings = Vec::new();
@@ -79,7 +80,7 @@ impl Backend {
             if !mapping.alias.eq_ignore_ascii_case(&symbol_upper) {
                 continue;
             }
-            let table_key = normalize_lookup_key(&mapping.table);
+            let table_key = normalize_lookup_key(&mapping.table, false);
             if mapping.start_byte <= offset {
                 let should_take = buffer_before
                     .as_ref()
@@ -252,45 +253,6 @@ impl Backend {
     }
 }
 
-#[derive(Clone, Copy)]
-struct ByteScope {
-    start: usize,
-    end: usize,
-}
-
-fn containing_scope(root: Node, offset: usize) -> Option<ByteScope> {
-    let mut node = root.named_descendant_for_byte_range(offset, offset)?;
-    loop {
-        if is_scope_node(node.kind()) {
-            return Some(ByteScope {
-                start: node.start_byte(),
-                end: node.end_byte(),
-            });
-        }
-        let Some(parent) = node.parent() else {
-            break;
-        };
-        node = parent;
-    }
-
-    Some(ByteScope {
-        start: root.start_byte(),
-        end: root.end_byte(),
-    })
-}
-
-fn is_scope_node(kind: &str) -> bool {
-    matches!(
-        kind,
-        "function_definition"
-            | "function_forward_definition"
-            | "procedure_definition"
-            | "method_definition"
-            | "constructor_definition"
-            | "destructor_definition"
-    )
-}
-
 fn pick_single_location(locations: &[Location]) -> Option<Location> {
     locations.iter().cloned().min_by(|a, b| {
         a.uri
@@ -318,10 +280,4 @@ fn lookup_schema_location(
             None
         }
     })
-}
-
-fn normalize_lookup_key(symbol: &str) -> String {
-    symbol
-        .trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '_')
-        .to_ascii_uppercase()
 }

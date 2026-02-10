@@ -1,7 +1,7 @@
-use tower_lsp::lsp_types::{CompletionItemKind, Position, Range};
+use tower_lsp::lsp_types::{CompletionItemKind, Range};
 use tree_sitter::Node;
 
-use crate::utils::ts::{first_descendant_by_kind, node_trimmed_text};
+use crate::utils::ts::{first_descendant_by_kind, node_to_range, node_trimmed_text};
 
 pub struct AblSymbol {
     pub label: String,
@@ -126,17 +126,10 @@ fn push_site(name_node: Node, src: &[u8], out: &mut Vec<AblDefinitionSite>) {
     if let Some(label) = node_trimmed_text(name_node, src) {
         out.push(AblDefinitionSite {
             label,
-            range: Range::new(
-                point_to_position(name_node.start_position()),
-                point_to_position(name_node.end_position()),
-            ),
+            range: node_to_range(name_node),
             start_byte: name_node.start_byte(),
         });
     }
-}
-
-fn point_to_position(point: tree_sitter::Point) -> Position {
-    Position::new(point.row as u32, point.column as u32)
 }
 
 fn symbol_detail(node: Node, src: &[u8], default_detail: &'static str) -> String {

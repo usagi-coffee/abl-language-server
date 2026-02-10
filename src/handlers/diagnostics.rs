@@ -6,7 +6,7 @@ use tree_sitter::Node;
 
 use crate::analysis::includes::collect_include_sites;
 use crate::backend::Backend;
-use crate::utils::ts::direct_child_by_kind;
+use crate::utils::ts::{count_nodes_by_kind, direct_child_by_kind, node_to_range};
 
 pub async fn on_change(backend: &Backend, uri: Url, text: String) {
     backend.docs.insert(uri.clone(), text.to_owned());
@@ -136,8 +136,7 @@ fn collect_function_arities(node: Node<'_>, src: &[u8], out: &mut HashMap<String
 
 fn function_param_count(function_node: Node<'_>, src: &[u8]) -> usize {
     if let Some(parameters_node) = direct_child_by_kind(function_node, "parameters") {
-        let mut count = 0usize;
-        count_nodes_by_kind(parameters_node, "parameter", &mut count);
+        let count = count_nodes_by_kind(parameters_node, "parameter");
         if count > 0 {
             return count;
         }
@@ -195,16 +194,7 @@ fn collect_function_calls(node: Node<'_>, src: &[u8], out: &mut Vec<FunctionCall
                 display_name,
                 name_upper,
                 arg_count,
-                range: Range::new(
-                    Position::new(
-                        target_node.start_position().row as u32,
-                        target_node.start_position().column as u32,
-                    ),
-                    Position::new(
-                        target_node.end_position().row as u32,
-                        target_node.end_position().column as u32,
-                    ),
-                ),
+                range: node_to_range(target_node),
             });
         }
     }
@@ -228,17 +218,6 @@ fn count_argument_nodes(arguments_node: Node<'_>) -> usize {
     count
 }
 
-fn count_nodes_by_kind(node: Node<'_>, kind: &str, out: &mut usize) {
-    if node.kind() == kind {
-        *out += 1;
-    }
-    for i in 0..node.child_count() {
-        if let Some(ch) = node.child(i as u32) {
-            count_nodes_by_kind(ch, kind, out);
-        }
-    }
-}
-
 fn normalize_function_name(name: &str) -> String {
     name.split(|c: char| c == '.' || c == ':' || c.is_whitespace())
         .next_back()
@@ -256,14 +235,8 @@ struct FunctionCallSite {
 
 fn collect_ts_error_diags(node: Node, out: &mut Vec<Diagnostic>) {
     if node.is_error() || node.is_missing() {
-        let sp = node.start_position();
-        let ep = node.end_position();
-
         out.push(Diagnostic {
-            range: Range::new(
-                Position::new(sp.row as u32, sp.column as u32),
-                Position::new(ep.row as u32, ep.column as u32),
-            ),
+            range: node_to_range(node),
             severity: Some(DiagnosticSeverity::ERROR),
             source: Some("tree-sitter".into()),
             message: if node.is_missing() {

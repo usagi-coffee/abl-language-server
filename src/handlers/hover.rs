@@ -6,6 +6,8 @@ use tree_sitter::Node;
 use crate::analysis::buffers::collect_buffer_mappings;
 use crate::analysis::definitions::collect_definition_symbols;
 use crate::analysis::includes::collect_include_sites;
+use crate::analysis::schema::normalize_lookup_key;
+use crate::analysis::scopes::containing_scope;
 use crate::backend::Backend;
 use crate::utils::position::{
     ascii_ident_at_or_before, ascii_ident_or_dash_at_or_before, lsp_pos_to_utf8_byte_offset,
@@ -37,7 +39,7 @@ impl Backend {
             Some(s) => s,
             None => return Ok(None),
         };
-        let symbol_upper = normalize_lookup_key(&symbol);
+        let symbol_upper = normalize_lookup_key(&symbol, true);
 
         if let Some(sig) = find_function_signature(tree.root_node(), text.as_bytes(), &symbol) {
             let header = match sig.return_type {
@@ -222,12 +224,6 @@ fn markdown_hover(markdown: String) -> Hover {
         }),
         range: None,
     }
-}
-
-fn normalize_lookup_key(symbol: &str) -> String {
-    symbol
-        .trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '_' && c != '-')
-        .to_ascii_uppercase()
 }
 
 fn symbol_at_offset(root: Node<'_>, text: &str, offset: usize) -> Option<String> {
@@ -437,43 +433,4 @@ END FUNCTION.
         assert!(sig.params[1].contains("OUTPUT"));
         assert!(sig.params[1].contains("p2"));
     }
-}
-
-#[derive(Clone, Copy)]
-struct ByteScope {
-    start: usize,
-    end: usize,
-}
-
-fn containing_scope(root: Node<'_>, offset: usize) -> Option<ByteScope> {
-    let mut node = root.named_descendant_for_byte_range(offset, offset)?;
-    loop {
-        if is_scope_node(node.kind()) {
-            return Some(ByteScope {
-                start: node.start_byte(),
-                end: node.end_byte(),
-            });
-        }
-        let Some(parent) = node.parent() else {
-            break;
-        };
-        node = parent;
-    }
-
-    Some(ByteScope {
-        start: root.start_byte(),
-        end: root.end_byte(),
-    })
-}
-
-fn is_scope_node(kind: &str) -> bool {
-    matches!(
-        kind,
-        "function_definition"
-            | "function_forward_definition"
-            | "procedure_definition"
-            | "method_definition"
-            | "constructor_definition"
-            | "destructor_definition"
-    )
 }

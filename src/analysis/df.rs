@@ -1,6 +1,8 @@
 use std::collections::HashSet;
-use tower_lsp::lsp_types::{Position, Range};
+use tower_lsp::lsp_types::Range;
 use tree_sitter::Node;
+
+use crate::utils::ts::node_to_range;
 
 /// Collects table names from parsed DF source (`ADD TABLE "name"` statements).
 pub fn collect_df_table_names(node: Node, src: &[u8], out: &mut HashSet<String>) {
@@ -33,10 +35,7 @@ pub fn collect_df_table_sites(node: Node, src: &[u8], out: &mut Vec<DfTableSite>
     {
         out.push(DfTableSite {
             name: name.to_string(),
-            range: Range::new(
-                point_to_position(table_node.start_position()),
-                point_to_position(table_node.end_position()),
-            ),
+            range: node_to_range(table_node),
         });
     }
 
@@ -61,10 +60,7 @@ pub fn collect_df_field_sites(node: Node, src: &[u8], out: &mut Vec<DfFieldSite>
     {
         out.push(DfFieldSite {
             name: name.to_string(),
-            range: Range::new(
-                point_to_position(field_node.start_position()),
-                point_to_position(field_node.end_position()),
-            ),
+            range: node_to_range(field_node),
         });
     }
 
@@ -155,10 +151,7 @@ pub fn collect_df_index_sites(node: Node, src: &[u8], out: &mut Vec<DfIndexSite>
     {
         out.push(DfIndexSite {
             name: name.to_string(),
-            range: Range::new(
-                point_to_position(index_node.start_position()),
-                point_to_position(index_node.end_position()),
-            ),
+            range: node_to_range(index_node),
         });
     }
 
@@ -179,10 +172,6 @@ fn unquote(value: &str) -> Option<&str> {
         }
     }
     None
-}
-
-fn point_to_position(point: tree_sitter::Point) -> Position {
-    Position::new(point.row as u32, point.column as u32)
 }
 
 fn extract_first_quoted(raw: &str) -> Option<String> {
