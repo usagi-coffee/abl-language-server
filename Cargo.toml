@@ -1,6 +1,6 @@
 [package]
 name = "abl-language-server"
-version = "0.0.2"
+version = "0.0.4"
 edition = "2024"
 
 [dependencies]
@@ -13,6 +13,6 @@ dashmap = "6.1.0"
 log = "0.4.14"
 anyhow = "1.0.93"
 tree-sitter = "0.26.3"
-tree-sitter-abl = { git = "https://github.com/usagi-coffee/tree-sitter-abl", rev = "a95be5de6c210cd51adf4b956075a8d2e2a472de" }
-tree-sitter-df = { git = "https://github.com/usagi-coffee/tree-sitter-df" }
+tree-sitter-abl = { git = "https://github.com/usagi-coffee/tree-sitter-abl", rev = "ff0ac4dc7823b35e9a39e96e51e30ca006ecebda" }
+tree-sitter-df = { git = "https://github.com/usagi-coffee/tree-sitter-df", rev = "ebf38d0765c84c6f7202bfd4a4033c47393d91b2" }
 toml = "0.8"

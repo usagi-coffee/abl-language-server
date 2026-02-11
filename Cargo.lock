@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "abl-language-server"
-version = "0.0.2"
+version = "0.0.4"
 dependencies = [
  "anyhow",
  "dashmap 6.1.0",
@@ -1040,7 +1040,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter-abl"
 version = "0.0.50"
-source = "git+https://github.com/usagi-coffee/tree-sitter-abl?rev=a95be5de6c210cd51adf4b956075a8d2e2a472de#a95be5de6c210cd51adf4b956075a8d2e2a472de"
+source = "git+https://github.com/usagi-coffee/tree-sitter-abl?rev=ff0ac4dc7823b35e9a39e96e51e30ca006ecebda#ff0ac4dc7823b35e9a39e96e51e30ca006ecebda"
 dependencies = [
  "cc",
  "tree-sitter-language",
@@ -1049,7 +1049,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter-df"
 version = "0.0.5"
-source = "git+https://github.com/usagi-coffee/tree-sitter-df#ebf38d0765c84c6f7202bfd4a4033c47393d91b2"
+source = "git+https://github.com/usagi-coffee/tree-sitter-df?rev=ebf38d0765c84c6f7202bfd4a4033c47393d91b2#ebf38d0765c84c6f7202bfd4a4033c47393d91b2"
 dependencies = [
  "cc",
  "tree-sitter-language",
