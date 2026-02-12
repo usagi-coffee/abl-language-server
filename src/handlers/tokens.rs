@@ -12,6 +12,9 @@ impl Backend {
         &self,
         params: SemanticTokensParams,
     ) -> Result<Option<SemanticTokensResult>> {
+        if !self.config.lock().await.semantic_tokens.enabled {
+            return Ok(None);
+        }
         let uri = params.text_document.uri;
         let tokens = self.collect_table_semantic_tokens(&uri, None).await;
         Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
@@ -24,6 +27,9 @@ impl Backend {
         &self,
         params: SemanticTokensRangeParams,
     ) -> Result<Option<SemanticTokensRangeResult>> {
+        if !self.config.lock().await.semantic_tokens.enabled {
+            return Ok(None);
+        }
         let uri = params.text_document.uri;
         let tokens = self
             .collect_table_semantic_tokens(&uri, Some(params.range))
@@ -49,9 +55,7 @@ impl Backend {
         let mut nodes = Vec::<Node>::new();
         collect_nodes_by_kind(tree.root_node(), "identifier", &mut nodes);
 
-        let tables: std::collections::HashSet<String> =
-            self.db_tables.iter().map(|v| v.key().clone()).collect();
-        if tables.is_empty() {
+        if self.db_tables.is_empty() {
             return vec![];
         }
 
@@ -73,7 +77,7 @@ impl Backend {
             let Ok(name) = node.utf8_text(text.as_bytes()) else {
                 continue;
             };
-            if tables.contains(&name.to_ascii_uppercase()) {
+            if self.db_tables.contains(&name.to_ascii_uppercase()) {
                 raw.push((start_line, start_col, len));
             }
         }

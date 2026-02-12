@@ -3,11 +3,12 @@ use log::{debug, warn};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use tokio::sync::Mutex;
+use std::sync::Mutex as StdMutex;
+use tokio::sync::Mutex as AsyncMutex;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
-use tree_sitter::{Parser, Tree};
+use tree_sitter::{Language, Parser, Tree};
 
 use crate::config::{AblConfig, find_workspace_root, load_from_workspace_root};
 
@@ -22,12 +23,14 @@ pub struct DbFieldInfo {
 
 pub struct Backend {
     pub client: Client,
-    pub parser: Mutex<Parser>,
-    pub df_parser: Mutex<Parser>,
+    pub abl_language: Language,
+    pub abl_parsers: DashMap<Url, StdMutex<Parser>>,
+    pub df_parser: AsyncMutex<Parser>,
     pub trees: DashMap<Url, Tree>,
     pub docs: DashMap<Url, String>,
-    pub workspace_root: Mutex<Option<std::path::PathBuf>>,
-    pub config: Mutex<AblConfig>,
+    pub doc_versions: DashMap<Url, i32>,
+    pub workspace_root: AsyncMutex<Option<std::path::PathBuf>>,
+    pub config: AsyncMutex<AblConfig>,
     pub db_tables: DashSet<String>,
     pub db_table_labels: DashMap<String, String>,
     pub db_table_definitions: DashMap<String, Vec<Location>>,
@@ -45,6 +48,7 @@ impl LanguageServer for Backend {
             *workspace_root = root;
         }
         self.reload_workspace_config().await;
+        let semantic_tokens_enabled = self.config.lock().await.semantic_tokens.enabled;
 
         Ok(InitializeResult {
             server_info: None,
@@ -73,8 +77,8 @@ impl LanguageServer for Backend {
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 execute_command_provider: None,
                 workspace: None,
-                semantic_tokens_provider: Some(
-                    SemanticTokensServerCapabilities::SemanticTokensOptions(
+                semantic_tokens_provider: if semantic_tokens_enabled {
+                    Some(SemanticTokensServerCapabilities::SemanticTokensOptions(
                         SemanticTokensOptions {
                             legend: SemanticTokensLegend {
                                 token_types: vec![SemanticTokenType::TYPE],
@@ -84,8 +88,10 @@ impl LanguageServer for Backend {
                             full: Some(SemanticTokensFullOptions::Bool(true)),
                             work_done_progress_options: WorkDoneProgressOptions::default(),
                         },
-                    ),
-                ),
+                    ))
+                } else {
+                    None
+                },
                 definition_provider: Some(OneOf::Left(true)),
                 references_provider: Some(OneOf::Left(true)),
                 rename_provider: None,
@@ -206,6 +212,14 @@ impl LanguageServer for Backend {
 }
 
 impl Backend {
+    pub fn new_abl_parser(&self) -> Parser {
+        let mut parser = Parser::new();
+        parser
+            .set_language(&self.abl_language)
+            .expect("Error loading abl parser");
+        parser
+    }
+
     pub async fn reload_workspace_config(&self) {
         let workspace_root = self.workspace_root.lock().await.clone();
         let loaded = load_from_workspace_root(workspace_root.as_deref()).await;

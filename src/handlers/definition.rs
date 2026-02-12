@@ -156,6 +156,7 @@ impl Backend {
         let mut parsed_include_functions: HashMap<PathBuf, Vec<AblDefinitionSite>> = HashMap::new();
         let mut include_before: Option<(usize, Location)> = None;
         let mut include_after: Option<(usize, Location)> = None;
+        let mut include_parser = self.new_abl_parser();
 
         for include in include_sites {
             if include.start_offset < scope.start || include.start_offset > scope.end {
@@ -174,10 +175,7 @@ impl Backend {
                     continue;
                 };
 
-                let include_tree = {
-                    let mut parser = self.parser.lock().await;
-                    parser.parse(&include_text, None)
-                };
+                let include_tree = include_parser.parse(&include_text, None);
                 let Some(include_tree) = include_tree else {
                     continue;
                 };

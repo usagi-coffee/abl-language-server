@@ -50,6 +50,9 @@ enabled = true
 
 [diagnostics]
 enabled = true
+
+[semantic_tokens]
+enabled = true
 ```
 
 ### Option reference
@@ -57,7 +60,8 @@ enabled = true
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `completion.enabled` | `bool` | `true` | Enables completion responses |
-| `diagnostics.enabled` | `bool` | `true` | Reserved config flag (currently parser diagnostics and semantic arity checks are active in server flow) |
+| `diagnostics.enabled` | `bool` | `true` | Enables/disables all diagnostic publishing (syntax + semantic arity) |
+| `semantic_tokens.enabled` | `bool` | `true` | Enables semantic token responses (DB table identifier highlighting) |
 | `dumpfile` | `string \| string[]` | `[]` | Path(s) to `.df` dump files; relative paths resolve from workspace root |
 | `propath` | `string \| string[]` | `[]` | Include search roots for `{...}` includes; relative paths resolve from workspace root |
 

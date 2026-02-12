@@ -18,11 +18,7 @@ async fn main() {
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();
 
-    let mut parser = tree_sitter::Parser::new();
-    let language = tree_sitter_abl::LANGUAGE;
-    parser
-        .set_language(&language.into())
-        .expect("Error loading abl parser");
+    let abl_language = tree_sitter_abl::LANGUAGE.into();
 
     let mut df_parser = tree_sitter::Parser::new();
     let df_language = tree_sitter_df::LANGUAGE;
@@ -34,7 +30,9 @@ async fn main() {
         client,
         docs: DashMap::new(),
         trees: DashMap::new(),
-        parser: Mutex::new(parser),
+        doc_versions: DashMap::new(),
+        abl_language,
+        abl_parsers: DashMap::new(),
         df_parser: Mutex::new(df_parser),
         workspace_root: Mutex::new(None),
         config: Mutex::new(AblConfig::default()),

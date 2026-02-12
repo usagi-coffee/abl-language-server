@@ -174,6 +174,7 @@ impl Backend {
 
         let include_sites = collect_include_sites(text);
         let mut seen_files = HashSet::new();
+        let mut include_parser = self.new_abl_parser();
 
         for include in include_sites {
             if include.start_offset < scope.start || include.start_offset > scope.end {
@@ -193,10 +194,7 @@ impl Backend {
             let Ok(include_text) = tokio::fs::read_to_string(&include_path).await else {
                 continue;
             };
-            let include_tree = {
-                let mut parser = self.parser.lock().await;
-                parser.parse(&include_text, None)
-            };
+            let include_tree = include_parser.parse(&include_text, None);
             let Some(include_tree) = include_tree else {
                 continue;
             };

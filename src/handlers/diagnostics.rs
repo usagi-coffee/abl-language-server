@@ -9,41 +9,108 @@ use crate::analysis::includes::collect_include_sites;
 use crate::backend::Backend;
 use crate::utils::ts::{count_nodes_by_kind, direct_child_by_kind, node_to_range};
 
-pub async fn on_change(backend: &Backend, uri: Url, text: String) {
+pub async fn on_change(
+    backend: &Backend,
+    uri: Url,
+    version: i32,
+    text: String,
+    include_semantic_diags: bool,
+) {
+    if !should_accept_version(backend, &uri, version) {
+        return;
+    }
+
+    backend.doc_versions.insert(uri.clone(), version);
     backend.docs.insert(uri.clone(), text.to_owned());
 
-    let tree = {
-        let mut parser = backend.parser.lock().await;
-        match parser.parse(text.clone(), None) {
-            Some(t) => t,
-            None => {
-                backend
-                    .client
-                    .publish_diagnostics(uri.clone(), vec![], None)
-                    .await;
+    if !is_latest_version(backend, &uri, version) {
+        return;
+    }
+
+    let diagnostics_enabled = backend.config.lock().await.diagnostics.enabled;
+
+    let parsed_tree = {
+        let parser_mutex = backend
+            .abl_parsers
+            .entry(uri.clone())
+            .or_insert_with(|| std::sync::Mutex::new(backend.new_abl_parser()));
+        let mut parser = parser_mutex.lock().expect("ABL parser mutex poisoned");
+        if !is_latest_version(backend, &uri, version) {
+            return;
+        }
+        parser.parse(text.clone(), None)
+    };
+    let tree = match parsed_tree {
+        Some(t) => t,
+        None => {
+            if !is_latest_version(backend, &uri, version) {
                 return;
             }
+            backend
+                .client
+                .publish_diagnostics(uri.clone(), vec![], Some(version))
+                .await;
+            return;
         }
     };
 
+    if !is_latest_version(backend, &uri, version) {
+        return;
+    }
+
+    if !diagnostics_enabled {
+        backend
+            .client
+            .publish_diagnostics(uri.clone(), vec![], Some(version))
+            .await;
+        if !is_latest_version(backend, &uri, version) {
+            return;
+        }
+        backend.trees.insert(uri, tree);
+        return;
+    }
+
     let mut diags: Vec<Diagnostic> = Vec::new();
     collect_ts_error_diags(tree.root_node(), &mut diags);
-    collect_function_call_arity_diags(backend, &uri, &text, tree.root_node(), &mut diags).await;
+    if include_semantic_diags
+        && !collect_function_call_arity_diags(
+            backend,
+            &uri,
+            version,
+            &text,
+            tree.root_node(),
+            &mut diags,
+        )
+        .await
+    {
+        return;
+    }
+    if !is_latest_version(backend, &uri, version) {
+        return;
+    }
     backend
         .client
-        .publish_diagnostics(uri.clone(), diags, None)
+        .publish_diagnostics(uri.clone(), diags, Some(version))
         .await;
 
+    if !is_latest_version(backend, &uri, version) {
+        return;
+    }
     backend.trees.insert(uri, tree);
 }
 
 async fn collect_function_call_arity_diags(
     backend: &Backend,
     uri: &Url,
+    version: i32,
     text: &str,
     root: Node<'_>,
     out: &mut Vec<Diagnostic>,
-) {
+) -> bool {
+    if !is_latest_version(backend, uri, version) {
+        return false;
+    }
+
     let mut signatures = HashMap::<String, Vec<usize>>::new();
     collect_function_arities(root, text.as_bytes(), &mut signatures);
 
@@ -51,7 +118,11 @@ async fn collect_function_call_arity_diags(
     if let Ok(current_path) = uri.to_file_path() {
         let include_sites = collect_include_sites(text);
         let mut seen = HashSet::<PathBuf>::new();
+        let mut include_parser = backend.new_abl_parser();
         for include in include_sites {
+            if !is_latest_version(backend, uri, version) {
+                return false;
+            }
             let Some(path) = backend
                 .resolve_include_path_for(&current_path, &include.path)
                 .await
@@ -65,19 +136,26 @@ async fn collect_function_call_arity_diags(
             let Ok(include_text) = tokio::fs::read_to_string(&path).await else {
                 continue;
             };
-            let include_tree = {
-                let mut parser = backend.parser.lock().await;
-                parser.parse(&include_text, None)
-            };
+            if !is_latest_version(backend, uri, version) {
+                return false;
+            }
+            let include_tree = include_parser.parse(&include_text, None);
             let Some(include_tree) = include_tree else {
                 continue;
             };
+            if !is_latest_version(backend, uri, version) {
+                return false;
+            }
             collect_function_arities(
                 include_tree.root_node(),
                 include_text.as_bytes(),
                 &mut signatures,
             );
         }
+    }
+
+    if !is_latest_version(backend, uri, version) {
+        return false;
     }
 
     for arities in signatures.values_mut() {
@@ -111,6 +189,19 @@ async fn collect_function_call_arity_diags(
             ..Default::default()
         });
     }
+
+    true
+}
+
+fn should_accept_version(backend: &Backend, uri: &Url, version: i32) -> bool {
+    match backend.doc_versions.get(uri) {
+        Some(current) => *current <= version,
+        None => true,
+    }
+}
+
+fn is_latest_version(backend: &Backend, uri: &Url, version: i32) -> bool {
+    matches!(backend.doc_versions.get(uri), Some(current) if *current == version)
 }
 
 fn collect_function_arities(node: Node<'_>, src: &[u8], out: &mut HashMap<String, Vec<usize>>) {

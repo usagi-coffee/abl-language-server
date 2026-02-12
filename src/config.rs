@@ -8,6 +8,7 @@ use tower_lsp::lsp_types::InitializeParams;
 pub struct AblConfig {
     pub completion: CompletionConfig,
     pub diagnostics: DiagnosticsConfig,
+    pub semantic_tokens: SemanticTokensConfig,
     #[serde(default, deserialize_with = "deserialize_dumpfile")]
     pub dumpfile: Vec<String>,
     #[serde(default, deserialize_with = "deserialize_propath")]
@@ -33,6 +34,18 @@ pub struct DiagnosticsConfig {
 }
 
 impl Default for DiagnosticsConfig {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct SemanticTokensConfig {
+    pub enabled: bool,
+}
+
+impl Default for SemanticTokensConfig {
     fn default() -> Self {
         Self { enabled: true }
     }
