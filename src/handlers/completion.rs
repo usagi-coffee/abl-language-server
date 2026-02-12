@@ -115,14 +115,12 @@ impl Backend {
                     return Ok(Some(CompletionResponse::Array(items)));
                 }
 
-                if let Some(like_key) = local_like_by_table.get(&table_key) {
-                    if let Some(fields) =
+                if let Some(like_key) = local_like_by_table.get(&table_key)
+                    && let Some(fields) =
                         lookup_case_insensitive_fields(&self.db_fields_by_table, like_key)
-                    {
-                        let items =
-                            build_field_completion_items(&fields, &table_key, &field_prefix);
-                        return Ok(Some(CompletionResponse::Array(items)));
-                    }
+                {
+                    let items = build_field_completion_items(&fields, &table_key, &field_prefix);
+                    return Ok(Some(CompletionResponse::Array(items)));
                 }
 
                 let fields = lookup_case_insensitive_fields(&self.db_fields_by_table, &table_key);
