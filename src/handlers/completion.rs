@@ -11,6 +11,7 @@ use crate::analysis::completion::{
 use crate::analysis::definitions::collect_definition_symbols;
 use crate::analysis::includes::collect_include_sites;
 use crate::analysis::local_tables::collect_local_table_definitions;
+use crate::analysis::scopes::containing_scope;
 use crate::backend::Backend;
 use crate::backend::DbFieldInfo;
 use crate::utils::position::{ascii_ident_prefix, lsp_pos_to_utf8_byte_offset};
@@ -137,12 +138,20 @@ impl Backend {
 
         let mut candidates = Vec::<CompletionCandidate>::new();
 
+        let root = tree.root_node();
+        let current_scope = containing_scope(root, offset);
         let mut symbols = Vec::new();
-        collect_definition_symbols(tree.root_node(), text.as_bytes(), &mut symbols);
+        collect_definition_symbols(root, text.as_bytes(), &mut symbols);
         candidates.extend(
             symbols
                 .into_iter()
                 .filter(|s| s.start_byte <= offset)
+                .filter(|s| {
+                    if !is_parameter_symbol_at_byte(root, s.start_byte) {
+                        return true;
+                    }
+                    symbol_is_in_current_scope(root, s.start_byte, current_scope)
+                })
                 .map(|s| CompletionCandidate {
                     label: s.label,
                     kind: s.kind,
@@ -233,18 +242,20 @@ impl Backend {
             let Some(include_tree) = include_tree else {
                 continue;
             };
+            let include_root = include_tree.root_node();
 
             let mut symbols = Vec::new();
-            collect_definition_symbols(
-                include_tree.root_node(),
-                include_text.as_bytes(),
-                &mut symbols,
+            collect_definition_symbols(include_root, include_text.as_bytes(), &mut symbols);
+            out.extend(
+                symbols
+                    .into_iter()
+                    .filter(|s| !is_parameter_symbol_at_byte(include_root, s.start_byte))
+                    .map(|s| CompletionCandidate {
+                        label: s.label,
+                        kind: s.kind,
+                        detail: s.detail,
+                    }),
             );
-            out.extend(symbols.into_iter().map(|s| CompletionCandidate {
-                label: s.label,
-                kind: s.kind,
-                detail: s.detail,
-            }));
         }
 
         out
@@ -278,4 +289,33 @@ fn build_field_completion_items(
     });
     items.dedup_by(|a, b| a.label.eq_ignore_ascii_case(&b.label));
     items
+}
+
+fn is_parameter_symbol_at_byte(root: tree_sitter::Node<'_>, start_byte: usize) -> bool {
+    let Some(mut node) = root.named_descendant_for_byte_range(start_byte, start_byte) else {
+        return false;
+    };
+    loop {
+        if matches!(node.kind(), "parameter" | "parameter_definition") {
+            return true;
+        }
+        let Some(parent) = node.parent() else {
+            return false;
+        };
+        node = parent;
+    }
+}
+
+fn symbol_is_in_current_scope(
+    root: tree_sitter::Node<'_>,
+    symbol_start_byte: usize,
+    current_scope: Option<crate::analysis::scopes::ByteScope>,
+) -> bool {
+    let Some(current_scope) = current_scope else {
+        return false;
+    };
+    let Some(symbol_scope) = containing_scope(root, symbol_start_byte) else {
+        return false;
+    };
+    symbol_scope.start == current_scope.start && symbol_scope.end == current_scope.end
 }
