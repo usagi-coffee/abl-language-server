@@ -1,4 +1,5 @@
 use dashmap::{DashMap, DashSet};
+use std::sync::Arc;
 use tokio::sync::Mutex;
 use tower_lsp::{LspService, Server};
 
@@ -9,6 +10,7 @@ mod handlers;
 mod utils;
 
 use backend::Backend;
+use backend::BackendState;
 use config::AblConfig;
 
 #[tokio::main]
@@ -28,20 +30,23 @@ async fn main() {
 
     let (service, socket) = LspService::build(|client| Backend {
         client,
-        docs: DashMap::new(),
-        trees: DashMap::new(),
-        doc_versions: DashMap::new(),
-        abl_language,
-        abl_parsers: DashMap::new(),
-        df_parser: Mutex::new(df_parser),
-        workspace_root: Mutex::new(None),
-        config: Mutex::new(AblConfig::default()),
-        db_tables: DashSet::new(),
-        db_table_labels: DashMap::new(),
-        db_table_definitions: DashMap::new(),
-        db_field_definitions: DashMap::new(),
-        db_index_definitions: DashMap::new(),
-        db_fields_by_table: DashMap::new(),
+        state: Arc::new(BackendState {
+            docs: DashMap::new(),
+            trees: DashMap::new(),
+            doc_versions: DashMap::new(),
+            abl_language,
+            abl_parsers: DashMap::new(),
+            df_parser: Mutex::new(df_parser),
+            workspace_root: Mutex::new(None),
+            config: Mutex::new(AblConfig::default()),
+            db_tables: DashSet::new(),
+            db_table_labels: DashMap::new(),
+            db_table_definitions: DashMap::new(),
+            db_field_definitions: DashMap::new(),
+            db_index_definitions: DashMap::new(),
+            db_fields_by_table: DashMap::new(),
+            diag_tasks: Mutex::new(std::collections::HashMap::new()),
+        }),
     })
     .finish();
 

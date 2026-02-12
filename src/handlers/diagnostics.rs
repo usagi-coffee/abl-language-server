@@ -9,6 +9,8 @@ use crate::analysis::includes::collect_include_sites;
 use crate::backend::Backend;
 use crate::utils::ts::{count_nodes_by_kind, direct_child_by_kind, node_to_range};
 
+const MAX_SYNTAX_DIAGNOSTICS_PER_CHANGE: usize = 64;
+
 pub async fn on_change(
     backend: &Backend,
     uri: Url,
@@ -28,7 +30,6 @@ pub async fn on_change(
     }
 
     let diagnostics_enabled = backend.config.lock().await.diagnostics.enabled;
-
     let parsed_tree = {
         let parser_mutex = backend
             .abl_parsers
@@ -71,7 +72,11 @@ pub async fn on_change(
     }
 
     let mut diags: Vec<Diagnostic> = Vec::new();
-    collect_ts_error_diags(tree.root_node(), &mut diags);
+    collect_ts_error_diags(
+        tree.root_node(),
+        &mut diags,
+        MAX_SYNTAX_DIAGNOSTICS_PER_CHANGE,
+    );
     if include_semantic_diags
         && !collect_function_call_arity_diags(
             backend,
@@ -317,7 +322,11 @@ struct FunctionCallSite {
     range: Range,
 }
 
-fn collect_ts_error_diags(node: Node, out: &mut Vec<Diagnostic>) {
+fn collect_ts_error_diags(node: Node, out: &mut Vec<Diagnostic>, limit: usize) {
+    if out.len() >= limit {
+        return;
+    }
+
     if node.is_error() || node.is_missing() {
         out.push(Diagnostic {
             range: node_to_range(node),
@@ -330,12 +339,18 @@ fn collect_ts_error_diags(node: Node, out: &mut Vec<Diagnostic>) {
             },
             ..Default::default()
         });
+        if out.len() >= limit {
+            return;
+        }
     }
 
     // DFS
     for i in 0..node.child_count() {
         if let Some(ch) = node.child(i as u32) {
-            collect_ts_error_diags(ch, out);
+            collect_ts_error_diags(ch, out, limit);
+            if out.len() >= limit {
+                return;
+            }
         }
     }
 }

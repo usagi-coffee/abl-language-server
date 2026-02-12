@@ -2,7 +2,9 @@ use dashmap::{DashMap, DashSet};
 use log::{debug, warn};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
+use std::ops::Deref;
 use std::path::Path;
+use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use tokio::sync::Mutex as AsyncMutex;
 use tower_lsp::jsonrpc::Result;
@@ -21,8 +23,7 @@ pub struct DbFieldInfo {
     pub description: Option<String>,
 }
 
-pub struct Backend {
-    pub client: Client,
+pub struct BackendState {
     pub abl_language: Language,
     pub abl_parsers: DashMap<Url, StdMutex<Parser>>,
     pub df_parser: AsyncMutex<Parser>,
@@ -37,6 +38,21 @@ pub struct Backend {
     pub db_field_definitions: DashMap<String, Vec<Location>>,
     pub db_index_definitions: DashMap<String, Vec<Location>>,
     pub db_fields_by_table: DashMap<String, Vec<DbFieldInfo>>,
+    pub diag_tasks: AsyncMutex<HashMap<Url, tokio::task::JoinHandle<()>>>,
+}
+
+#[derive(Clone)]
+pub struct Backend {
+    pub client: Client,
+    pub state: Arc<BackendState>,
+}
+
+impl Deref for Backend {
+    type Target = BackendState;
+
+    fn deref(&self) -> &Self::Target {
+        &self.state
+    }
 }
 
 #[tower_lsp::async_trait]
@@ -60,7 +76,7 @@ impl LanguageServer for Backend {
                 text_document_sync: Some(TextDocumentSyncCapability::Options(
                     TextDocumentSyncOptions {
                         open_close: Some(true),
-                        change: Some(TextDocumentSyncKind::FULL),
+                        change: Some(TextDocumentSyncKind::INCREMENTAL),
                         save: Some(TextDocumentSyncSaveOptions::SaveOptions(SaveOptions {
                             include_text: Some(true),
                         })),

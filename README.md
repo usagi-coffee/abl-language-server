@@ -14,7 +14,7 @@ The language server currently does not touch your files, it's strictly read-only
 
 | Feature | Notes |
 | --- | --- |
-| Text sync | `TextDocumentSyncKind::FULL` |
+| Text sync | `TextDocumentSyncKind::INCREMENTAL` |
 | Parser diagnostics | Tree-sitter syntax errors (`is_error` / `is_missing`) |
 | Semantic diagnostics: function arity | Checks `function_call` argument count against known function definitions (current file + included `.i` files) |
 | Completion: local symbols | Variables/definitions with case-insensitive prefix filtering |
