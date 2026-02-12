@@ -2,3 +2,4 @@
 example.p
 tree-sitter-abl
 tree-sitter-df
+!grammar/tree-sitter-abl
