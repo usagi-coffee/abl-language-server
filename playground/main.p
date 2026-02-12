@@ -1,3 +1,8 @@
+on "RETURN" of browse_lp_mstr
+DO:
+
+END.
+
 // We should be able to go to files for relative paths
 {includes/include.i}
 

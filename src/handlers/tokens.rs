@@ -59,25 +59,27 @@ impl Backend {
             return vec![];
         }
 
+        let line_starts = line_start_offsets(text.as_str());
         let mut raw = Vec::<(u32, u32, u32)>::new();
         for node in nodes {
             let sp = node.start_position();
-            let ep = node.end_position();
             let start_line = sp.row as u32;
-            let start_col = sp.column as u32;
-            let len = (ep.column.saturating_sub(sp.column)) as u32;
-
-            if len == 0 {
-                continue;
-            }
-            if !is_in_range(start_line, start_col, len, range.as_ref()) {
-                continue;
-            }
-
             let Ok(name) = node.utf8_text(text.as_bytes()) else {
                 continue;
             };
             if self.db_tables.contains(&name.to_ascii_uppercase()) {
+                let Some(start_col) =
+                    point_column_byte_to_utf16(text.as_str(), &line_starts, start_line, sp.column)
+                else {
+                    continue;
+                };
+                let len = name.encode_utf16().count() as u32;
+                if len == 0 {
+                    continue;
+                }
+                if !is_in_range(start_line, start_col, len, range.as_ref()) {
+                    continue;
+                }
                 raw.push((start_line, start_col, len));
             }
         }
@@ -127,4 +129,47 @@ fn is_in_range(start_line: u32, start_col: u32, length: u32, range: Option<&Rang
     }
 
     true
+}
+
+fn line_start_offsets(text: &str) -> Vec<usize> {
+    let mut starts = vec![0usize];
+    for (i, b) in text.bytes().enumerate() {
+        if b == b'\n' {
+            starts.push(i + 1);
+        }
+    }
+    starts
+}
+
+fn point_column_byte_to_utf16(
+    text: &str,
+    line_starts: &[usize],
+    line: u32,
+    column_byte: usize,
+) -> Option<u32> {
+    let line_start = *line_starts.get(line as usize)?;
+    let abs = line_start.saturating_add(column_byte);
+    if abs > text.len() || !text.is_char_boundary(abs) {
+        return None;
+    }
+    Some(text[line_start..abs].encode_utf16().count() as u32)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{line_start_offsets, point_column_byte_to_utf16};
+
+    #[test]
+    fn converts_byte_column_to_utf16_with_non_ascii_prefix() {
+        let text = "oNestedObject:Add(\"Ilość\", lpopak_mstr.lpopak_ilosc).";
+        let starts = line_start_offsets(text);
+
+        let token = "lpopak_mstr";
+        let byte_col = text.find(token).expect("token byte column");
+        let utf16_col = point_column_byte_to_utf16(text, &starts, 0, byte_col)
+            .expect("utf16 column conversion");
+
+        let expected_utf16 = text[..byte_col].encode_utf16().count() as u32;
+        assert_eq!(utf16_col, expected_utf16);
+    }
 }
