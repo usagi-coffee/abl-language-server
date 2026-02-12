@@ -90,6 +90,11 @@ impl LanguageServer for Backend {
                     all_commit_characters: None,
                     completion_item: None,
                 }),
+                signature_help_provider: Some(SignatureHelpOptions {
+                    trigger_characters: Some(vec!["(".to_string(), ",".to_string()]),
+                    retrigger_characters: Some(vec![",".to_string()]),
+                    work_done_progress_options: WorkDoneProgressOptions::default(),
+                }),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 execute_command_provider: None,
                 workspace: None,
@@ -178,6 +183,10 @@ impl LanguageServer for Backend {
 
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
         self.handle_completion(params).await
+    }
+
+    async fn signature_help(&self, params: SignatureHelpParams) -> Result<Option<SignatureHelp>> {
+        self.handle_signature_help(params).await
     }
 
     async fn rename(&self, _params: RenameParams) -> Result<Option<WorkspaceEdit>> {

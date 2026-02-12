@@ -55,11 +55,13 @@ DEFINE BUFFER b_tt FOR tt_local.
 lv_name = tt_local.name.
 lv_name = b_tt.name.
 
+
 // Hover should work
 MESSAGE "index name" z9zw_mstr.z9zw_name VIEW-AS ALERT-BOX INFO BUTTONS OK.
 
-lv_counter = inc_plus(lv_counter).
+lv_counter = inc_plus(lv_before).
 lv_counter = inc_minus(lv_counter).
+lv_counter = local_mul(lv_counter, 2). // Signature help on '(' and ','
 
 // Should error ecause both parameters are INTEGER
 local_mul("5", 1).
