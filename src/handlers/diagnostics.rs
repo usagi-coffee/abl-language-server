@@ -714,7 +714,6 @@ fn argument_exprs(arguments_node: Node<'_>) -> Vec<Node<'_>> {
 
 fn parse_basic_type(raw: &str) -> Option<BasicType> {
     let upper = raw
-        .trim()
         .split_whitespace()
         .next()
         .unwrap_or_default()

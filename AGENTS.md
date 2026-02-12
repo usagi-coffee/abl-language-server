@@ -28,6 +28,8 @@
   - `cargo test`
 - Type-check/build:
   - `cargo check`
+- Clippy
+  - `cargo clippy --fix`
 - Build server:
   - `cargo build`
 - Run the server (stdio transport):
@@ -62,6 +64,7 @@ If `cargo` commands fail with crate download errors, the environment has no netw
   - handler implementation in `src/handlers/*`
   - state/analysis updates if needed
   - validation via `cargo test` (or at least `cargo check` when tests are absent)
+  - fix syntax issues with `cargo clippy --fix` and `cargo fmt`
   - manual example in `playground/`
 - Do not silently degrade diagnostics/completion behavior when adding new features; keep existing flows intact unless change is intentional and documented.
 - Keep logging useful but restrained (`debug!` for development flow, avoid noisy logs in hot paths unless needed for diagnosis).
