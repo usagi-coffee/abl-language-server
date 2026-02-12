@@ -19,6 +19,24 @@ jobs:
     - uses: actions/checkout@v4
       with:
         submodules: recursive
+        fetch-depth: 0
+
+    - name: Sync and initialize submodules
+      run: |
+        git submodule sync --recursive
+        git submodule update --init --recursive
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: "20"
+
+    - name: Install tree-sitter CLI
+      run: npm install -g tree-sitter-cli
+
+    - name: Generate parser in tree-sitter-abl submodule
+      working-directory: grammar/tree-sitter-abl
+      run: tree-sitter generate
 
     - name: Setup Rust
       uses: dtolnay/rust-toolchain@stable
@@ -87,6 +105,24 @@ jobs:
     - uses: actions/checkout@v4
       with:
         submodules: recursive
+        fetch-depth: 0
+
+    - name: Sync and initialize submodules
+      run: |
+        git submodule sync --recursive
+        git submodule update --init --recursive
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: "20"
+
+    - name: Install tree-sitter CLI
+      run: npm install -g tree-sitter-cli
+
+    - name: Generate parser in tree-sitter-abl submodule
+      working-directory: grammar/tree-sitter-abl
+      run: tree-sitter generate
 
     - name: Setup Rust
       uses: dtolnay/rust-toolchain@stable
