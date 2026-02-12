@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use tower_lsp::lsp_types::*;
 use tree_sitter::Node;
 
+use crate::analysis::definitions::collect_definition_symbols;
 use crate::analysis::functions::normalize_function_name;
 use crate::analysis::includes::collect_include_sites;
 use crate::backend::Backend;
@@ -87,6 +88,19 @@ pub async fn on_change(
             &mut diags,
         )
         .await
+    {
+        return;
+    }
+    if !collect_unknown_symbol_diags(
+        backend,
+        &uri,
+        version,
+        &text,
+        tree.root_node(),
+        include_semantic_diags,
+        &mut diags,
+    )
+    .await
     {
         return;
     }
@@ -316,6 +330,279 @@ fn count_argument_nodes(arguments_node: Node<'_>) -> usize {
         }
     }
     count
+}
+
+async fn collect_unknown_symbol_diags(
+    backend: &Backend,
+    uri: &Url,
+    version: i32,
+    text: &str,
+    root: Node<'_>,
+    include_semantic_diags: bool,
+    out: &mut Vec<Diagnostic>,
+) -> bool {
+    if !is_latest_version(backend, uri, version) {
+        return false;
+    }
+
+    let mut known_variables = HashSet::<String>::new();
+    let mut known_functions = HashSet::<String>::new();
+    collect_known_symbols(
+        root,
+        text.as_bytes(),
+        &mut known_variables,
+        &mut known_functions,
+    );
+
+    if include_semantic_diags && let Ok(current_path) = uri.to_file_path() {
+        let include_sites = collect_include_sites(text);
+        let mut seen = HashSet::<PathBuf>::new();
+        let mut include_parser = backend.new_abl_parser();
+        for include in include_sites {
+            if !is_latest_version(backend, uri, version) {
+                return false;
+            }
+            let Some(path) = backend
+                .resolve_include_path_for(&current_path, &include.path)
+                .await
+            else {
+                continue;
+            };
+            if !seen.insert(path.clone()) {
+                continue;
+            }
+            let Ok(include_text) = tokio::fs::read_to_string(&path).await else {
+                continue;
+            };
+            if !is_latest_version(backend, uri, version) {
+                return false;
+            }
+            let Some(include_tree) = include_parser.parse(&include_text, None) else {
+                continue;
+            };
+            collect_known_symbols(
+                include_tree.root_node(),
+                include_text.as_bytes(),
+                &mut known_variables,
+                &mut known_functions,
+            );
+        }
+    }
+
+    let mut refs = Vec::<IdentifierRef>::new();
+    collect_identifier_refs_for_unknown_symbol_diag(root, text.as_bytes(), &mut refs);
+    refs.sort_by(|a, b| {
+        a.range
+            .start
+            .line
+            .cmp(&b.range.start.line)
+            .then(a.range.start.character.cmp(&b.range.start.character))
+            .then(a.name_upper.cmp(&b.name_upper))
+    });
+    refs.dedup_by(|a, b| a.name_upper == b.name_upper && a.range == b.range);
+
+    for r in refs {
+        if known_variables.contains(&r.name_upper)
+            || backend.db_tables.contains(&r.name_upper)
+            || is_builtin_variable_name(&r.name_upper)
+        {
+            continue;
+        }
+        out.push(Diagnostic {
+            range: r.range,
+            severity: Some(DiagnosticSeverity::ERROR),
+            source: Some("abl-semantic".into()),
+            message: format!("Unknown variable '{}'", r.display_name),
+            ..Default::default()
+        });
+    }
+
+    let mut calls = Vec::<FunctionCallSite>::new();
+    collect_function_calls(root, text.as_bytes(), &mut calls);
+    for call in calls {
+        if known_functions.contains(&call.name_upper)
+            || is_builtin_function_name(&call.name_upper)
+            || call.display_name.contains('.')
+            || call.display_name.contains(':')
+        {
+            continue;
+        }
+        out.push(Diagnostic {
+            range: call.range,
+            severity: Some(DiagnosticSeverity::ERROR),
+            source: Some("abl-semantic".into()),
+            message: format!("Unknown function '{}'", call.display_name),
+            ..Default::default()
+        });
+    }
+
+    true
+}
+
+fn collect_known_symbols(
+    root: Node<'_>,
+    src: &[u8],
+    known_variables: &mut HashSet<String>,
+    known_functions: &mut HashSet<String>,
+) {
+    let mut symbols = Vec::new();
+    collect_definition_symbols(root, src, &mut symbols);
+    for sym in symbols {
+        let upper = sym.label.trim().to_ascii_uppercase();
+        if upper.is_empty() {
+            continue;
+        }
+        match sym.kind {
+            CompletionItemKind::FUNCTION
+            | CompletionItemKind::METHOD
+            | CompletionItemKind::CONSTRUCTOR => {
+                known_functions.insert(normalize_function_name(&upper));
+            }
+            _ => {
+                known_variables.insert(upper);
+            }
+        }
+    }
+}
+
+fn collect_identifier_refs_for_unknown_symbol_diag(
+    node: Node<'_>,
+    src: &[u8],
+    out: &mut Vec<IdentifierRef>,
+) {
+    match node.kind() {
+        "assignment_statement" => {
+            if let Some(left) = node.child_by_field_name("left")
+                && left.kind() == "identifier"
+                && let Ok(name_raw) = left.utf8_text(src)
+            {
+                let display_name = name_raw.trim().to_string();
+                if !display_name.is_empty() {
+                    out.push(IdentifierRef {
+                        name_upper: display_name.to_ascii_uppercase(),
+                        display_name,
+                        range: node_to_range(left),
+                    });
+                }
+            }
+            if let Some(right) = node.child_by_field_name("right") {
+                collect_identifier_refs_from_expression(right, src, out);
+            }
+        }
+        "return_statement" => {
+            if let Some(value) = node
+                .child_by_field_name("value")
+                .or_else(|| node.named_child(0))
+            {
+                collect_identifier_refs_from_expression(value, src, out);
+            }
+        }
+        "expression_statement" => {
+            if let Some(expr) = node.named_child(0) {
+                collect_identifier_refs_from_expression(expr, src, out);
+            }
+        }
+        _ => {}
+    }
+
+    for i in 0..node.child_count() {
+        if let Some(ch) = node.child(i as u32) {
+            collect_identifier_refs_for_unknown_symbol_diag(ch, src, out);
+        }
+    }
+}
+
+fn collect_identifier_refs_from_expression(
+    expr: Node<'_>,
+    src: &[u8],
+    out: &mut Vec<IdentifierRef>,
+) {
+    match expr.kind() {
+        "identifier" => {
+            if let Ok(name_raw) = expr.utf8_text(src) {
+                let display_name = name_raw.trim().to_string();
+                if !display_name.is_empty() {
+                    out.push(IdentifierRef {
+                        name_upper: display_name.to_ascii_uppercase(),
+                        display_name,
+                        range: node_to_range(expr),
+                    });
+                }
+            }
+            return;
+        }
+        "qualified_name" | "widget_qualified_name" | "scoped_name" | "object_access" => return,
+        "function_call" => {
+            if let Some(args) = expr
+                .children(&mut expr.walk())
+                .find(|n| n.kind() == "arguments")
+            {
+                for arg in argument_exprs(args) {
+                    collect_identifier_refs_from_expression(arg, src, out);
+                }
+            }
+            return;
+        }
+        _ => {}
+    }
+
+    for i in 0..expr.child_count() {
+        if let Some(ch) = expr.child(i as u32) {
+            collect_identifier_refs_from_expression(ch, src, out);
+        }
+    }
+}
+
+fn is_builtin_function_name(name_upper: &str) -> bool {
+    matches!(
+        name_upper,
+        "ABS"
+            | "ASC"
+            | "CHR"
+            | "DATE"
+            | "DATETIME"
+            | "DATETIME-TZ"
+            | "DECIMAL"
+            | "DYNAMIC-FUNCTION"
+            | "ENTRY"
+            | "INDEX"
+            | "INTEGER"
+            | "INT64"
+            | "LENGTH"
+            | "LOGICAL"
+            | "LOOKUP"
+            | "NUM-ENTRIES"
+            | "R-INDEX"
+            | "RANDOM"
+            | "REPLACE"
+            | "STRING"
+            | "SUBSTRING"
+            | "TODAY"
+            | "TRIM"
+    )
+}
+
+fn is_builtin_variable_name(name_upper: &str) -> bool {
+    matches!(
+        name_upper,
+        "SESSION"
+            | "ERROR-STATUS"
+            | "THIS-PROCEDURE"
+            | "SOURCE-PROCEDURE"
+            | "TARGET-PROCEDURE"
+            | "CURRENT-WINDOW"
+            | "DEFAULT-WINDOW"
+            | "ACTIVE-WINDOW"
+            | "SELF"
+            | "SUPER"
+            | "THIS-OBJECT"
+    )
+}
+
+struct IdentifierRef {
+    name_upper: String,
+    display_name: String,
+    range: Range,
 }
 
 struct FunctionCallSite {
