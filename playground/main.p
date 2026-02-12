@@ -12,8 +12,11 @@ END FUNCTION.
 // We should not be able to get completion before the definitions
 // lv_
 
-// After these we shuold be able to autcomplete them
+// After these we should be able to autcomplete them
 DEFINE VARIABLE lv_before AS CHARACTER NO-UNDO.
+// Type mismatch, should error
+lv_before = 1.
+
 DEFINE VARIABLE lv_counter AS INTEGER NO-UNDO.
 DEFINE VARIABLE lv_name AS CHARACTER NO-UNDO.
 
@@ -36,6 +39,9 @@ MESSAGE "index name" z9zw_mstr.z9zw_name VIEW-AS ALERT-BOX INFO BUTTONS OK.
 
 lv_counter = inc_plus(lv_counter).
 lv_counter = inc_minus(lv_counter).
+
+// Should error ecause both parameters are INTEGER
+local_mul("5", 1).
 
 // Wrong arity should produce an error diagnostic.
 lv_counter = local_mul(lv_counter).
