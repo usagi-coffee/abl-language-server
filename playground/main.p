@@ -42,6 +42,15 @@ lv_name = z9zw_mstr.z9zw_name.
 DEFINE BUFFER b_mstr FOR z9zw_mstr.
 lv_before = b_mstr.z9zw_name.
 
+// Local temp/work tables should also support dot field completion.
+DEFINE TEMP-TABLE tt_local NO-UNDO
+  FIELD id AS INTEGER
+  FIELD name AS CHARACTER.
+
+DEFINE BUFFER b_tt FOR tt_local.
+lv_name = tt_local.name.
+lv_name = b_tt.name.
+
 // Hover should work
 MESSAGE "index name" z9zw_mstr.z9zw_name VIEW-AS ALERT-BOX INFO BUTTONS OK.
 

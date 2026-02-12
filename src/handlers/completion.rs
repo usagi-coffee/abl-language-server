@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
@@ -10,7 +10,9 @@ use crate::analysis::completion::{
 };
 use crate::analysis::definitions::collect_definition_symbols;
 use crate::analysis::includes::collect_include_sites;
+use crate::analysis::local_tables::collect_local_table_definitions;
 use crate::backend::Backend;
+use crate::backend::DbFieldInfo;
 use crate::utils::position::{ascii_ident_prefix, lsp_pos_to_utf8_byte_offset};
 
 struct CompletionCandidate {
@@ -75,7 +77,29 @@ impl Backend {
             let qualifier_upper = qualifier.to_ascii_uppercase();
             let mut table_upper = Some(qualifier_upper.clone());
 
-            if !self.db_fields_by_table.contains_key(&qualifier_upper) {
+            let mut local_table_defs = Vec::new();
+            collect_local_table_definitions(
+                tree.root_node(),
+                text.as_bytes(),
+                &mut local_table_defs,
+            );
+            let local_fields_by_table = local_table_defs
+                .iter()
+                .map(|d| (d.name_upper.clone(), d.fields.clone()))
+                .collect::<HashMap<_, _>>();
+            let local_like_by_table = local_table_defs
+                .iter()
+                .filter_map(|d| {
+                    d.like_table_upper
+                        .as_ref()
+                        .map(|like| (d.name_upper.clone(), like.clone()))
+                })
+                .collect::<HashMap<_, _>>();
+
+            if !self.db_fields_by_table.contains_key(&qualifier_upper)
+                && !local_fields_by_table.contains_key(&qualifier_upper)
+                && !local_like_by_table.contains_key(&qualifier_upper)
+            {
                 let mut mappings = Vec::new();
                 collect_buffer_mappings(tree.root_node(), text.as_bytes(), &mut mappings);
                 table_upper = mappings
@@ -85,29 +109,24 @@ impl Backend {
             }
 
             if let Some(table_key) = table_upper {
+                if let Some(fields) = local_fields_by_table.get(&table_key) {
+                    let items = build_field_completion_items(fields, &table_key, &field_prefix);
+                    return Ok(Some(CompletionResponse::Array(items)));
+                }
+
+                if let Some(like_key) = local_like_by_table.get(&table_key) {
+                    if let Some(fields) =
+                        lookup_case_insensitive_fields(&self.db_fields_by_table, like_key)
+                    {
+                        let items =
+                            build_field_completion_items(&fields, &table_key, &field_prefix);
+                        return Ok(Some(CompletionResponse::Array(items)));
+                    }
+                }
+
                 let fields = lookup_case_insensitive_fields(&self.db_fields_by_table, &table_key);
                 if let Some(fields) = fields {
-                    let pref_up = field_prefix.to_ascii_uppercase();
-                    let mut items = fields
-                        .iter()
-                        .filter(|f| f.name.to_ascii_uppercase().starts_with(&pref_up))
-                        .map(|f| CompletionItem {
-                            label: f.name.clone(),
-                            kind: Some(CompletionItemKind::FIELD),
-                            detail: Some(field_detail(f, &table_key)),
-                            documentation: field_documentation(f),
-                            insert_text: Some(f.name.clone()),
-                            insert_text_format: Some(InsertTextFormat::PLAIN_TEXT),
-                            ..Default::default()
-                        })
-                        .collect::<Vec<_>>();
-                    items.sort_by(|a, b| {
-                        a.label
-                            .to_ascii_uppercase()
-                            .cmp(&b.label.to_ascii_uppercase())
-                            .then(a.label.cmp(&b.label))
-                    });
-                    items.dedup_by(|a, b| a.label.eq_ignore_ascii_case(&b.label));
+                    let items = build_field_completion_items(&fields, &table_key, &field_prefix);
                     return Ok(Some(CompletionResponse::Array(items)));
                 }
             }
@@ -230,4 +249,33 @@ impl Backend {
 
         out
     }
+}
+
+fn build_field_completion_items(
+    fields: &[DbFieldInfo],
+    table_key: &str,
+    field_prefix: &str,
+) -> Vec<CompletionItem> {
+    let pref_up = field_prefix.to_ascii_uppercase();
+    let mut items = fields
+        .iter()
+        .filter(|f| f.name.to_ascii_uppercase().starts_with(&pref_up))
+        .map(|f| CompletionItem {
+            label: f.name.clone(),
+            kind: Some(CompletionItemKind::FIELD),
+            detail: Some(field_detail(f, table_key)),
+            documentation: field_documentation(f),
+            insert_text: Some(f.name.clone()),
+            insert_text_format: Some(InsertTextFormat::PLAIN_TEXT),
+            ..Default::default()
+        })
+        .collect::<Vec<_>>();
+    items.sort_by(|a, b| {
+        a.label
+            .to_ascii_uppercase()
+            .cmp(&b.label.to_ascii_uppercase())
+            .then(a.label.cmp(&b.label))
+    });
+    items.dedup_by(|a, b| a.label.eq_ignore_ascii_case(&b.label));
+    items
 }

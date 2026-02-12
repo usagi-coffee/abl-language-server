@@ -20,7 +20,9 @@ fn completion_kind_for_node(node_kind: &str) -> Option<(CompletionItemKind, &'st
     use CompletionItemKind as Kind;
 
     let entry = match node_kind {
-        "variable_definition" | "parameter_definition" => (Kind::VARIABLE, "ABL variable"),
+        "variable_definition" | "parameter_definition" | "parameter" => {
+            (Kind::VARIABLE, "ABL variable")
+        }
         "function_definition" | "function_forward_definition" => (Kind::FUNCTION, "ABL function"),
         "procedure_definition" => (Kind::FUNCTION, "ABL procedure"),
         "method_definition" => (Kind::METHOD, "ABL method"),
@@ -152,4 +154,30 @@ fn is_function_definition_node(node_kind: &str) -> bool {
         node_kind,
         "function_definition" | "function_forward_definition"
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::collect_definition_symbols;
+
+    #[test]
+    fn collects_function_parameters_as_symbols() {
+        let src = r#"
+FUNCTION local_mul RETURNS INTEGER (INPUT p_a AS INTEGER, INPUT p_b AS INTEGER):
+  RETURN p_a * p_b.
+END FUNCTION.
+"#;
+
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_abl::LANGUAGE.into())
+            .expect("set abl language");
+        let tree = parser.parse(src, None).expect("parse source");
+
+        let mut symbols = Vec::new();
+        collect_definition_symbols(tree.root_node(), src.as_bytes(), &mut symbols);
+
+        assert!(symbols.iter().any(|s| s.label.eq_ignore_ascii_case("p_a")));
+        assert!(symbols.iter().any(|s| s.label.eq_ignore_ascii_case("p_b")));
+    }
 }

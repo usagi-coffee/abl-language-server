@@ -4,6 +4,7 @@ pub mod definitions;
 pub mod df;
 pub mod functions;
 pub mod includes;
+pub mod local_tables;
 pub mod schema;
 pub mod schema_lookup;
 pub mod scopes;
