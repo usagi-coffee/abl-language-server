@@ -14,16 +14,19 @@ FUNCTION local_mul RETURNS INTEGER (INPUT p_a AS INTEGER, INPUT p_b AS INTEGER):
   RETURN p_a * p_b.
 END FUNCTION.
 
+// Schema identifier should be a semantic token
+FIND z9zw_mstr.
+
 // We should not be able to get completion before the definitions
 // lv_
 
 // After these we should be able to autcomplete them
 DEFINE VARIABLE lv_before AS CHARACTER NO-UNDO.
+DEFINE VARIABLE lv_counter AS INTEGER NO-UNDO.
+DEFINE VARIABLE lv_name AS CHAR NO-UNDO.
+
 // Type mismatch, should error
 lv_before = 1.
-
-DEFINE VARIABLE lv_counter AS INTEGER NO-UNDO.
-DEFINE VARIABLE lv_name AS CHARACTER NO-UNDO.
 
 /* Hover + goto-definition/references on local symbols. */
 lv_counter = 1.

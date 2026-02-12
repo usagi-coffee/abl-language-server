@@ -2,6 +2,7 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tree_sitter::Node;
 
+use crate::analysis::buffers::collect_buffer_mappings;
 use crate::backend::Backend;
 use crate::utils::ts::collect_nodes_by_kind;
 
@@ -55,7 +56,13 @@ impl Backend {
         let mut nodes = Vec::<Node>::new();
         collect_nodes_by_kind(tree.root_node(), "identifier", &mut nodes);
 
-        if self.db_tables.is_empty() {
+        let mut buffer_mappings = Vec::new();
+        collect_buffer_mappings(tree.root_node(), text.as_bytes(), &mut buffer_mappings);
+        let buffer_aliases = buffer_mappings
+            .into_iter()
+            .map(|m| m.alias.to_ascii_uppercase())
+            .collect::<std::collections::HashSet<_>>();
+        if self.db_tables.is_empty() && buffer_aliases.is_empty() {
             return vec![];
         }
 
@@ -67,7 +74,8 @@ impl Backend {
             let Ok(name) = node.utf8_text(text.as_bytes()) else {
                 continue;
             };
-            if self.db_tables.contains(&name.to_ascii_uppercase()) {
+            let name_upper = name.to_ascii_uppercase();
+            if self.db_tables.contains(&name_upper) || buffer_aliases.contains(&name_upper) {
                 let Some(start_col) =
                     point_column_byte_to_utf16(text.as_str(), &line_starts, start_line, sp.column)
                 else {
