@@ -78,16 +78,16 @@ pub async fn on_change(
         &mut diags,
         MAX_SYNTAX_DIAGNOSTICS_PER_CHANGE,
     );
-    if include_semantic_diags
-        && !collect_function_call_arity_diags(
-            backend,
-            &uri,
-            version,
-            &text,
-            tree.root_node(),
-            &mut diags,
-        )
-        .await
+    if !collect_function_call_arity_diags(
+        backend,
+        &uri,
+        version,
+        &text,
+        tree.root_node(),
+        include_semantic_diags,
+        &mut diags,
+    )
+    .await
     {
         return;
     }
@@ -127,6 +127,7 @@ async fn collect_function_call_arity_diags(
     version: i32,
     text: &str,
     root: Node<'_>,
+    include_from_includes: bool,
     out: &mut Vec<Diagnostic>,
 ) -> bool {
     if !is_latest_version(backend, uri, version) {
@@ -136,8 +137,8 @@ async fn collect_function_call_arity_diags(
     let mut signatures = HashMap::<String, Vec<usize>>::new();
     collect_function_arities(root, text.as_bytes(), &mut signatures);
 
-    // Include signatures from directly included files.
-    if let Ok(current_path) = uri.to_file_path() {
+    // Include signatures from directly included files only on full semantic pass.
+    if include_from_includes && let Ok(current_path) = uri.to_file_path() {
         let include_sites = collect_include_sites(text);
         let mut seen = HashSet::<PathBuf>::new();
         let mut include_parser = backend.new_abl_parser();
@@ -341,6 +342,13 @@ async fn collect_unknown_symbol_diags(
     include_semantic_diags: bool,
     out: &mut Vec<Diagnostic>,
 ) -> bool {
+    // Lightweight on-change pass intentionally skips include parsing.
+    // Unknown-symbol diagnostics would otherwise flap for include-provided symbols
+    // until the full save/open semantic pass runs.
+    if !include_semantic_diags {
+        return true;
+    }
+
     if !is_latest_version(backend, uri, version) {
         return false;
     }

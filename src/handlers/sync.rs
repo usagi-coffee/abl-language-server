@@ -28,7 +28,8 @@ impl Backend {
             return;
         };
 
-        self.schedule_on_change(uri, params.text_document.version, new_text, false)
+        // Run full semantic diagnostics on every change so behavior matches save/open.
+        self.schedule_on_change(uri, params.text_document.version, new_text, true)
             .await;
         debug!("changed!");
     }
