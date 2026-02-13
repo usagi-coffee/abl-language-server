@@ -8,7 +8,6 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
-use std::time::SystemTime;
 use tokio::sync::Mutex as AsyncMutex;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
@@ -34,12 +33,10 @@ pub struct CachedCompletionSymbol {
 }
 
 pub struct IncludeCompletionCacheEntry {
-    pub modified: Option<SystemTime>,
     pub symbols: Vec<CachedCompletionSymbol>,
 }
 
 pub struct IncludeParseCacheEntry {
-    pub modified: Option<SystemTime>,
     pub text: Arc<String>,
     pub tree: Tree,
 }
@@ -51,6 +48,7 @@ pub struct DiagTask {
 pub struct DocumentState {
     pub text: String,
     pub version: i32,
+    pub tree_version: i32,
     pub tree: Option<Tree>,
     pub parser: StdMutex<Parser>,
     pub diag_task: Option<DiagTask>,
@@ -272,6 +270,7 @@ impl Backend {
         DocumentState {
             text,
             version,
+            tree_version: -1,
             tree: None,
             parser: StdMutex::new(self.new_abl_parser()),
             diag_task: None,
@@ -308,12 +307,14 @@ impl Backend {
                 doc.text = text;
                 if clear_tree {
                     doc.tree = None;
+                    doc.tree_version = -1;
                 }
             }
             Entry::Vacant(entry) => {
                 let mut doc = self.new_document_state(text, version);
                 if clear_tree {
                     doc.tree = None;
+                    doc.tree_version = -1;
                 }
                 entry.insert(doc);
             }
@@ -321,6 +322,23 @@ impl Backend {
     }
 
     pub fn get_document_tree_or_parse(&self, uri: &Url) -> Option<Tree> {
+        let mut doc = self.documents.get_mut(uri)?;
+        if doc.tree_version == doc.version
+            && let Some(tree) = &doc.tree
+        {
+            return Some(tree.clone());
+        }
+        let text = doc.text.clone();
+        let parsed = {
+            let mut parser = doc.parser.lock().expect("ABL parser mutex poisoned");
+            parser.parse(text.as_str(), None)?
+        };
+        doc.tree = Some(parsed.clone());
+        doc.tree_version = doc.version;
+        Some(parsed)
+    }
+
+    pub fn get_document_tree_prefer_cached(&self, uri: &Url) -> Option<Tree> {
         let mut doc = self.documents.get_mut(uri)?;
         if let Some(tree) = &doc.tree {
             return Some(tree.clone());
@@ -331,6 +349,7 @@ impl Backend {
             parser.parse(text.as_str(), None)?
         };
         doc.tree = Some(parsed.clone());
+        doc.tree_version = doc.version;
         Some(parsed)
     }
 
@@ -339,6 +358,7 @@ impl Backend {
             && doc.version == version
         {
             doc.tree = Some(tree);
+            doc.tree_version = version;
         }
     }
 
@@ -421,13 +441,7 @@ impl Backend {
         &self,
         include_path: &Path,
     ) -> Option<(Arc<String>, Tree)> {
-        let modified = tokio::fs::metadata(include_path)
-            .await
-            .ok()
-            .and_then(|m| m.modified().ok());
-        if let Some(entry) = self.include_parse_cache.get(include_path)
-            && entry.modified == modified
-        {
+        if let Some(entry) = self.include_parse_cache.get(include_path) {
             return Some((entry.text.clone(), entry.tree.clone()));
         }
 
@@ -438,12 +452,19 @@ impl Backend {
         self.include_parse_cache.insert(
             include_path.to_path_buf(),
             IncludeParseCacheEntry {
-                modified,
                 text: text.clone(),
                 tree: include_tree.clone(),
             },
         );
         Some((text, include_tree))
+    }
+
+    pub fn invalidate_include_caches_for_uri(&self, uri: &Url) {
+        let Ok(path) = uri.to_file_path() else {
+            return;
+        };
+        self.include_completion_cache.remove(&path);
+        self.include_parse_cache.remove(&path);
     }
 
     async fn reload_db_tables(&self, workspace_root: Option<&Path>, dumpfiles: &[String]) {

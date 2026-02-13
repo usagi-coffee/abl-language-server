@@ -32,7 +32,7 @@ impl Backend {
         let Some(new_text) = apply_content_changes(current, &params.content_changes) else {
             return;
         };
-        self.set_document_text_version(&uri, params.text_document.version, new_text.clone(), true);
+        self.set_document_text_version(&uri, params.text_document.version, new_text.clone(), false);
 
         self.schedule_on_change(
             uri,
@@ -46,6 +46,7 @@ impl Backend {
     }
 
     pub async fn handle_did_save(&self, params: DidSaveTextDocumentParams) {
+        self.invalidate_include_caches_for_uri(&params.text_document.uri);
         self.maybe_reload_config_for_uri(&params.text_document.uri)
             .await;
         self.maybe_reload_db_tables_for_uri(&params.text_document.uri)

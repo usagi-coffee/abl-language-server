@@ -33,6 +33,7 @@ Lv_before = 1.
 lv_counter = 1.
 lv_counter = local_mul(lv_counter, 2).
 
+
 // Go to definition on z9zw_mstr should go to definition in .df file
 FIND FIRST z9zw_mstr NO-LOCK NO-ERROR.
 

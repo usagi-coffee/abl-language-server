@@ -46,7 +46,9 @@ impl Backend {
             Some(t) => t,
             None => return Ok(Some(CompletionResponse::Array(vec![]))),
         };
-        let tree = match self.get_document_tree_or_parse(&uri) {
+        // Completion should remain responsive while typing; prefer cached tree
+        // rather than blocking on reparse for every document version.
+        let tree = match self.get_document_tree_prefer_cached(&uri) {
             Some(t) => t,
             None => return Ok(Some(CompletionResponse::Array(vec![]))),
         };
@@ -247,13 +249,7 @@ impl Backend {
         &self,
         include_path: &Path,
     ) -> Vec<CompletionCandidate> {
-        let modified = tokio::fs::metadata(include_path)
-            .await
-            .ok()
-            .and_then(|m| m.modified().ok());
-        if let Some(entry) = self.include_completion_cache.get(include_path)
-            && entry.modified == modified
-        {
+        if let Some(entry) = self.include_completion_cache.get(include_path) {
             return entry
                 .symbols
                 .iter()
@@ -285,7 +281,6 @@ impl Backend {
         self.include_completion_cache.insert(
             include_path.to_path_buf(),
             crate::backend::IncludeCompletionCacheEntry {
-                modified,
                 symbols: filtered.clone(),
             },
         );

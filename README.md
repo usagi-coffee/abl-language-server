@@ -4,7 +4,7 @@ Language Server Protocol (LSP) implementation for ABL (OpenEdge Advanced Busines
 
 The language server currently does not touch your files, it's strictly read-only, there should be no risk of file corruption.
 
-## Extensions 
+## Extensions
 
 [zed-openedge-abl](https://github.com/usagi-coffee/zed-openedge-abl)
 
@@ -12,23 +12,23 @@ The language server currently does not touch your files, it's strictly read-only
 
 ## Features
 
-| Feature | Notes |
-| --- | --- |
-| Text sync | `TextDocumentSyncKind::INCREMENTAL` |
-| Parser diagnostics | Tree-sitter syntax errors (`is_error` / `is_missing`) |
-| Semantic diagnostics: function arity | Checks `function_call` argument count against known function definitions (current file + included `.i` files) |
-| Completion: local symbols | Variables/definitions with case-insensitive prefix filtering |
-| Completion: DB tables | Uses configured `.df` dump files |
-| Completion: DB fields after `table.` | Supports table names and buffer aliases (`DEFINE BUFFER ... FOR ...`) |
-| Completion item details/docs | Field type in `detail`; `LABEL` / `FORMAT` / `DESCRIPTION` in docs when available |
-| Go to Definition: local | Local definitions |
-| Go to Definition: includes | Scoped include-aware function definitions |
-| Go to Definition: DB schema | Tables, fields, indexes from `.df`; buffer alias -> table definition |
-| Find References: DB table definitions | Returns matching `ADD TABLE` locations from `.df` |
-| Hover: local symbols | Type/detail hover |
-| Hover: functions | Signature with parameters + return type, include-aware |
-| Hover: DB schema | Table / field / index; field metadata includes type/label/format/description |
-| Semantic tokens | Highlights DB table identifiers (`token type: type`) |
+| Feature                               | Notes                                                                                                         |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Text sync                             | `TextDocumentSyncKind::FULL`                                                                                  |
+| Parser diagnostics                    | Tree-sitter syntax errors (`is_error` / `is_missing`)                                                         |
+| Semantic diagnostics: function arity  | Checks `function_call` argument count against known function definitions (current file + included `.i` files) |
+| Completion: local symbols             | Variables/definitions with case-insensitive prefix filtering                                                  |
+| Completion: DB tables                 | Uses configured `.df` dump files                                                                              |
+| Completion: DB fields after `table.`  | Supports table names and buffer aliases (`DEFINE BUFFER ... FOR ...`)                                         |
+| Completion item details/docs          | Field type in `detail`; `LABEL` / `FORMAT` / `DESCRIPTION` in docs when available                             |
+| Go to Definition: local               | Local definitions                                                                                             |
+| Go to Definition: includes            | Scoped include-aware function definitions                                                                     |
+| Go to Definition: DB schema           | Tables, fields, indexes from `.df`; buffer alias -> table definition                                          |
+| Find References: DB table definitions | Returns matching `ADD TABLE` locations from `.df`                                                             |
+| Hover: local symbols                  | Type/detail hover                                                                                             |
+| Hover: functions                      | Signature with parameters + return type, include-aware                                                        |
+| Hover: DB schema                      | Table / field / index; field metadata includes type/label/format/description                                  |
+| Semantic tokens                       | Highlights DB table identifiers (`token type: type`)                                                          |
 
 ## Configuration (`abl.toml`)
 
@@ -57,13 +57,13 @@ enabled = true
 
 ### Option reference
 
-| Key | Type | Default | Description |
-| --- | --- | --- | --- |
-| `completion.enabled` | `bool` | `true` | Enables completion responses |
-| `diagnostics.enabled` | `bool` | `true` | Enables/disables all diagnostic publishing (syntax + semantic arity) |
-| `semantic_tokens.enabled` | `bool` | `true` | Enables semantic token responses (DB table identifier highlighting) |
-| `dumpfile` | `string \| string[]` | `[]` | Path(s) to `.df` dump files; relative paths resolve from workspace root |
-| `propath` | `string \| string[]` | `[]` | Include search roots for `{...}` includes; relative paths resolve from workspace root |
+| Key                       | Type                 | Default | Description                                                                           |
+| ------------------------- | -------------------- | ------- | ------------------------------------------------------------------------------------- |
+| `completion.enabled`      | `bool`               | `true`  | Enables completion responses                                                          |
+| `diagnostics.enabled`     | `bool`               | `true`  | Enables/disables all diagnostic publishing (syntax + semantic arity)                  |
+| `semantic_tokens.enabled` | `bool`               | `true`  | Enables semantic token responses (DB table identifier highlighting)                   |
+| `dumpfile`                | `string \| string[]` | `[]`    | Path(s) to `.df` dump files; relative paths resolve from workspace root               |
+| `propath`                 | `string \| string[]` | `[]`    | Include search roots for `{...}` includes; relative paths resolve from workspace root |
 
 ### Dumpfile behavior
 
