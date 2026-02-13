@@ -5,6 +5,8 @@ use crate::backend::Backend;
 use crate::handlers::diagnostics::on_change;
 use crate::utils::position::lsp_pos_to_utf8_byte_offset;
 
+const DID_CHANGE_DIAG_DEBOUNCE_MS: u64 = 200;
+
 impl Backend {
     pub async fn handle_did_open(&self, params: DidOpenTextDocumentParams) {
         self.schedule_on_change(
@@ -12,6 +14,7 @@ impl Backend {
             params.text_document.version,
             params.text_document.text,
             true,
+            0,
         )
         .await;
         debug!("file opened!");
@@ -28,9 +31,14 @@ impl Backend {
             return;
         };
 
-        // Run full semantic diagnostics on every change so behavior matches save/open.
-        self.schedule_on_change(uri, params.text_document.version, new_text, true)
-            .await;
+        self.schedule_on_change(
+            uri,
+            params.text_document.version,
+            new_text,
+            false,
+            DID_CHANGE_DIAG_DEBOUNCE_MS,
+        )
+        .await;
         debug!("changed!");
     }
 
@@ -48,7 +56,7 @@ impl Backend {
                 .get(&params.text_document.uri)
                 .map(|t| t.value().clone()),
         ) {
-            self.schedule_on_change(params.text_document.uri, version, text, true)
+            self.schedule_on_change(params.text_document.uri, version, text, true, 0)
                 .await;
         }
         debug!("file saved!");
@@ -76,6 +84,7 @@ impl Backend {
         version: i32,
         text: String,
         include_semantic_diags: bool,
+        debounce_ms: u64,
     ) {
         let mut tasks = self.diag_tasks.lock().await;
         if let Some(prev) = tasks.remove(&uri) {
@@ -85,6 +94,9 @@ impl Backend {
         let backend = self.clone();
         let task_uri = uri.clone();
         let handle = tokio::spawn(async move {
+            if debounce_ms > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(debounce_ms)).await;
+            }
             on_change(&backend, task_uri, version, text, include_semantic_diags).await;
         });
         tasks.insert(uri, handle);

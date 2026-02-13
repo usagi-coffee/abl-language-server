@@ -4,11 +4,14 @@ use std::path::PathBuf;
 use tower_lsp::lsp_types::*;
 use tree_sitter::Node;
 
+use crate::analysis::buffers::collect_buffer_mappings;
 use crate::analysis::definitions::collect_definition_symbols;
 use crate::analysis::functions::normalize_function_name;
 use crate::analysis::includes::collect_include_sites;
 use crate::backend::Backend;
-use crate::utils::ts::{count_nodes_by_kind, direct_child_by_kind, node_to_range};
+use crate::utils::ts::{
+    collect_nodes_by_kind, count_nodes_by_kind, direct_child_by_kind, node_to_range,
+};
 
 const MAX_SYNTAX_DIAGNOSTICS_PER_CHANGE: usize = 64;
 
@@ -408,11 +411,14 @@ async fn collect_unknown_symbol_diags(
             .then(a.name_upper.cmp(&b.name_upper))
     });
     refs.dedup_by(|a, b| a.name_upper == b.name_upper && a.range == b.range);
+    let active_buffer_like_names = collect_active_buffer_like_names(root, text.as_bytes(), backend);
 
     for r in refs {
         if known_variables.contains(&r.name_upper)
             || backend.db_tables.contains(&r.name_upper)
             || is_builtin_variable_name(&r.name_upper)
+            || is_builtin_function_name(&r.name_upper)
+            || looks_like_table_field_reference(&r.name_upper, &active_buffer_like_names)
         {
             continue;
         }
@@ -445,6 +451,87 @@ async fn collect_unknown_symbol_diags(
     }
 
     true
+}
+
+fn collect_active_buffer_like_names(
+    root: Node<'_>,
+    src: &[u8],
+    backend: &Backend,
+) -> HashSet<String> {
+    let mut out = HashSet::<String>::new();
+
+    let mut buffer_mappings = Vec::new();
+    collect_buffer_mappings(root, src, &mut buffer_mappings);
+    for mapping in buffer_mappings {
+        let alias_upper = mapping.alias.trim().to_ascii_uppercase();
+        if !alias_upper.is_empty() {
+            out.insert(alias_upper);
+        }
+        let table_upper = mapping.table.trim().to_ascii_uppercase();
+        if !table_upper.is_empty() {
+            out.insert(table_upper);
+        }
+    }
+
+    let mut identifiers = Vec::<Node>::new();
+    collect_nodes_by_kind(root, "identifier", &mut identifiers);
+    for ident in identifiers {
+        let Ok(name_raw) = ident.utf8_text(src) else {
+            continue;
+        };
+        let name_upper = name_raw.trim().to_ascii_uppercase();
+        if name_upper.is_empty() {
+            continue;
+        }
+        if backend.db_tables.contains(&name_upper) {
+            out.insert(name_upper);
+        }
+    }
+
+    out
+}
+
+fn looks_like_table_field_reference(name_upper: &str, active_buffers: &HashSet<String>) -> bool {
+    if name_upper.is_empty() || active_buffers.is_empty() {
+        return false;
+    }
+    for buffer in active_buffers {
+        if looks_like_prefixed_field(name_upper, buffer)
+            || table_field_prefix_from_table_like_name(buffer)
+                .is_some_and(|prefix| looks_like_prefixed_field(name_upper, &prefix))
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn table_field_prefix_from_table_like_name(name_upper: &str) -> Option<String> {
+    let trimmed = name_upper.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    for sep in ['_', '-'] {
+        if let Some(idx) = trimmed.find(sep)
+            && idx > 0
+        {
+            let mut prefix = trimmed[..idx].to_string();
+            prefix.push('_');
+            return Some(prefix);
+        }
+    }
+    None
+}
+
+fn looks_like_prefixed_field(name_upper: &str, prefix_upper: &str) -> bool {
+    if !name_upper.starts_with(prefix_upper) || name_upper.len() <= prefix_upper.len() {
+        return false;
+    }
+    let suffix = &name_upper[prefix_upper.len()..];
+    let Some(first) = suffix.chars().next() else {
+        return false;
+    };
+    first.is_ascii_alphabetic() || first == '_'
 }
 
 fn collect_known_symbols(
@@ -900,20 +987,25 @@ fn is_builtin_function_name(name_upper: &str) -> bool {
 }
 
 fn is_builtin_variable_name(name_upper: &str) -> bool {
-    matches!(
-        name_upper,
-        "SESSION"
-            | "ERROR-STATUS"
-            | "THIS-PROCEDURE"
-            | "SOURCE-PROCEDURE"
-            | "TARGET-PROCEDURE"
-            | "CURRENT-WINDOW"
-            | "DEFAULT-WINDOW"
-            | "ACTIVE-WINDOW"
-            | "SELF"
-            | "SUPER"
-            | "THIS-OBJECT"
-    )
+    const BUILTIN_VARIABLES: &[&str] = &[
+        "SESSION",
+        "ERROR-STATUS",
+        "THIS-PROCEDURE",
+        "SOURCE-PROCEDURE",
+        "TARGET-PROCEDURE",
+        "CURRENT-WINDOW",
+        "DEFAULT-WINDOW",
+        "ACTIVE-WINDOW",
+        "SELF",
+        "SUPER",
+        "THIS-OBJECT",
+    ];
+    const GLOBAL_VARIABLE_EXCEPTIONS: &[&str] = &[
+        // Project-level globals intentionally allowed without local declaration.
+        "BATCHRUN",
+    ];
+
+    BUILTIN_VARIABLES.contains(&name_upper) || GLOBAL_VARIABLE_EXCEPTIONS.contains(&name_upper)
 }
 
 struct IdentifierRef {
