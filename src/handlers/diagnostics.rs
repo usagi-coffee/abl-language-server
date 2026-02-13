@@ -414,10 +414,13 @@ async fn collect_unknown_symbol_diags(
     });
     refs.dedup_by(|a, b| a.name_upper == b.name_upper && a.range == b.range);
     let active_buffer_like_names = collect_active_buffer_like_names(root, text.as_bytes(), backend);
+    let active_table_fields =
+        collect_active_db_table_field_symbols(backend, &active_buffer_like_names);
 
     for r in refs {
         if known_variables.contains(&r.name_upper)
             || backend.db_tables.contains(&r.name_upper)
+            || active_table_fields.contains(&r.name_upper)
             || is_builtin_variable_name(&r.name_upper)
             || is_builtin_function_name(&r.name_upper)
             || looks_like_table_field_reference(&r.name_upper, &active_buffer_like_names)
@@ -518,6 +521,25 @@ fn collect_active_buffer_like_names(
         }
     }
 
+    out
+}
+
+fn collect_active_db_table_field_symbols(
+    backend: &Backend,
+    active_table_like_names: &HashSet<String>,
+) -> HashSet<String> {
+    let mut out = HashSet::<String>::new();
+    for table_like in active_table_like_names {
+        let Some(fields) = backend.db_fields_by_table.get(table_like) else {
+            continue;
+        };
+        for field in fields.value().iter() {
+            let upper = field.name.trim().to_ascii_uppercase();
+            if !upper.is_empty() {
+                out.insert(upper);
+            }
+        }
+    }
     out
 }
 
