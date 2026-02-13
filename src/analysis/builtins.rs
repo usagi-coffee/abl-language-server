@@ -357,3 +357,32 @@ pub fn is_builtin_variable_name(name_upper: &str) -> bool {
 
     BUILTIN_VARIABLES.contains(&name_upper) || GLOBAL_VARIABLE_EXCEPTIONS.contains(&name_upper)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{is_builtin_function_name, is_builtin_variable_name};
+
+    #[test]
+    fn recognizes_abl_and_sql_builtin_functions() {
+        assert!(is_builtin_function_name("ABSOLUTE"));
+        assert!(is_builtin_function_name("DYNAMIC-FUNCTION"));
+        assert!(is_builtin_function_name("ADD-INTERVAL"));
+        assert!(is_builtin_function_name("TENANT-NAME-TO-ID"));
+        assert!(is_builtin_function_name("WIDGET-HANDLE"));
+        assert!(is_builtin_function_name("CDC_GET_CHANGED_COLUMNS"));
+        assert!(is_builtin_function_name("ADD_MONTHS"));
+        assert!(is_builtin_function_name("TO_TIMESTAMP"));
+        assert!(is_builtin_function_name("PRO_ARR_ESCAPE"));
+        assert!(is_builtin_function_name("SUBSTRING"));
+        assert!(!is_builtin_function_name("NOT_A_FUNCTION"));
+    }
+
+    #[test]
+    fn recognizes_builtin_and_global_exception_variables() {
+        assert!(is_builtin_variable_name("SESSION"));
+        assert!(is_builtin_variable_name("ERROR-STATUS"));
+        assert!(is_builtin_variable_name("ENDKEY"));
+        assert!(is_builtin_variable_name("BATCHRUN"));
+        assert!(!is_builtin_variable_name("NOT_A_VARIABLE"));
+    }
+}

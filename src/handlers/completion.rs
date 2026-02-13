@@ -7,8 +7,11 @@ use tower_lsp::lsp_types::*;
 
 use crate::analysis::buffers::collect_buffer_mappings;
 use crate::analysis::completion::{
-    field_detail, field_documentation, lookup_case_insensitive_fields, qualifier_before_dot,
-    text_has_dot_before_cursor,
+    lookup_case_insensitive_fields, qualifier_before_dot, text_has_dot_before_cursor,
+};
+use crate::analysis::completion_support::{
+    build_field_completion_items, completion_response, is_parameter_symbol_at_byte,
+    symbol_is_in_current_scope,
 };
 use crate::analysis::definitions::collect_definition_symbols;
 use crate::analysis::includes::collect_include_sites;
@@ -16,7 +19,6 @@ use crate::analysis::local_tables::collect_local_table_definitions;
 use crate::analysis::scopes::containing_scope;
 use crate::backend::Backend;
 use crate::backend::CachedCompletionSymbol;
-use crate::backend::DbFieldInfo;
 use crate::utils::position::{ascii_ident_prefix, lsp_pos_to_utf8_byte_offset};
 
 struct CompletionCandidate {
@@ -306,73 +308,4 @@ impl Backend {
             })
             .collect()
     }
-}
-
-fn completion_response(items: Vec<CompletionItem>, is_incomplete: bool) -> CompletionResponse {
-    if is_incomplete {
-        CompletionResponse::List(CompletionList {
-            is_incomplete: true,
-            items,
-        })
-    } else {
-        CompletionResponse::Array(items)
-    }
-}
-
-fn build_field_completion_items(
-    fields: &[DbFieldInfo],
-    table_key: &str,
-    field_prefix: &str,
-) -> Vec<CompletionItem> {
-    let pref_up = field_prefix.to_ascii_uppercase();
-    let mut items = fields
-        .iter()
-        .filter(|f| f.name.to_ascii_uppercase().starts_with(&pref_up))
-        .map(|f| CompletionItem {
-            label: f.name.clone(),
-            kind: Some(CompletionItemKind::FIELD),
-            detail: Some(field_detail(f, table_key)),
-            documentation: field_documentation(f),
-            insert_text: Some(f.name.clone()),
-            insert_text_format: Some(InsertTextFormat::PLAIN_TEXT),
-            ..Default::default()
-        })
-        .collect::<Vec<_>>();
-    items.sort_by(|a, b| {
-        a.label
-            .to_ascii_uppercase()
-            .cmp(&b.label.to_ascii_uppercase())
-            .then(a.label.cmp(&b.label))
-    });
-    items.dedup_by(|a, b| a.label.eq_ignore_ascii_case(&b.label));
-    items
-}
-
-fn is_parameter_symbol_at_byte(root: tree_sitter::Node<'_>, start_byte: usize) -> bool {
-    let Some(mut node) = root.named_descendant_for_byte_range(start_byte, start_byte) else {
-        return false;
-    };
-    loop {
-        if matches!(node.kind(), "parameter" | "parameter_definition") {
-            return true;
-        }
-        let Some(parent) = node.parent() else {
-            return false;
-        };
-        node = parent;
-    }
-}
-
-fn symbol_is_in_current_scope(
-    root: tree_sitter::Node<'_>,
-    symbol_start_byte: usize,
-    current_scope: Option<crate::analysis::scopes::ByteScope>,
-) -> bool {
-    let Some(current_scope) = current_scope else {
-        return false;
-    };
-    let Some(symbol_scope) = containing_scope(root, symbol_start_byte) else {
-        return false;
-    };
-    symbol_scope.start == current_scope.start && symbol_scope.end == current_scope.end
 }

@@ -1,5 +1,11 @@
+use std::collections::HashSet;
+
+use tower_lsp::lsp_types::Url;
 use tree_sitter::Node;
 
+use crate::analysis::includes::collect_include_sites;
+use crate::analysis::scopes::containing_scope;
+use crate::backend::Backend;
 use crate::utils::ts::direct_child_by_kind;
 
 pub struct FunctionSignature {
@@ -169,6 +175,48 @@ pub fn normalize_function_name(name: &str) -> String {
         .unwrap_or(name)
         .trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '_' && c != '-')
         .to_ascii_uppercase()
+}
+
+pub async fn find_function_signature_from_includes(
+    backend: &Backend,
+    uri: &Url,
+    text: &str,
+    root: Node<'_>,
+    offset: usize,
+    symbol: &str,
+) -> Option<FunctionSignature> {
+    let scope = containing_scope(root, offset)?;
+    let current_path = uri.to_file_path().ok()?;
+
+    let include_sites = collect_include_sites(text);
+    let mut seen_files = HashSet::new();
+
+    for include in include_sites {
+        if include.start_offset < scope.start || include.start_offset > scope.end {
+            continue;
+        }
+        let Some(include_path) = backend
+            .resolve_include_path_for(&current_path, &include.path)
+            .await
+        else {
+            continue;
+        };
+        if !seen_files.insert(include_path.clone()) {
+            continue;
+        }
+        let Some((include_text, include_tree)) =
+            backend.get_cached_include_parse(&include_path).await
+        else {
+            continue;
+        };
+        if let Some(sig) =
+            find_function_signature(include_tree.root_node(), include_text.as_bytes(), symbol)
+        {
+            return Some(sig);
+        }
+    }
+
+    None
 }
 
 #[cfg(test)]

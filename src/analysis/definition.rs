@@ -1,0 +1,211 @@
+use crate::analysis::buffers::collect_buffer_mappings;
+use crate::analysis::definitions::{
+    AblDefinitionSite, collect_definition_sites, collect_function_definition_sites,
+};
+use crate::analysis::includes::collect_include_sites;
+use crate::analysis::schema::normalize_lookup_key;
+use crate::analysis::schema_lookup::pick_single_location;
+use crate::analysis::scopes::containing_scope;
+use crate::backend::Backend;
+use std::collections::HashMap;
+use std::path::PathBuf;
+use tower_lsp::lsp_types::{Location, Position, Range, Url};
+use tree_sitter::Node;
+
+pub async fn resolve_include_directive_location(
+    backend: &Backend,
+    uri: &Url,
+    text: &str,
+    offset: usize,
+) -> Option<Location> {
+    let include_sites = collect_include_sites(text);
+    let include = include_sites
+        .into_iter()
+        .find(|site| offset >= site.start_offset && offset <= site.end_offset)?;
+
+    let current_path = uri.to_file_path().ok()?;
+    let include_path = backend
+        .resolve_include_path_for(&current_path, &include.path)
+        .await?;
+    let include_uri = Url::from_file_path(include_path).ok()?;
+
+    Some(Location {
+        uri: include_uri,
+        range: Range::new(Position::new(0, 0), Position::new(0, 0)),
+    })
+}
+
+pub fn resolve_buffer_alias_table_location(
+    backend: &Backend,
+    root: Node<'_>,
+    src: &[u8],
+    symbol_upper: &str,
+    offset: usize,
+) -> Option<Location> {
+    let mut buffer_mappings = Vec::new();
+    collect_buffer_mappings(root, src, &mut buffer_mappings);
+    let mut buffer_before: Option<(usize, String)> = None;
+    let mut buffer_after: Option<(usize, String)> = None;
+    for mapping in buffer_mappings {
+        if !mapping.alias.eq_ignore_ascii_case(symbol_upper) {
+            continue;
+        }
+        let table_key = normalize_lookup_key(&mapping.table, false);
+        if mapping.start_byte <= offset {
+            let should_take = buffer_before
+                .as_ref()
+                .map(|(start, _)| mapping.start_byte > *start)
+                .unwrap_or(true);
+            if should_take {
+                buffer_before = Some((mapping.start_byte, table_key));
+            }
+        } else {
+            let should_take = buffer_after
+                .as_ref()
+                .map(|(start, _)| mapping.start_byte < *start)
+                .unwrap_or(true);
+            if should_take {
+                buffer_after = Some((mapping.start_byte, table_key));
+            }
+        }
+    }
+
+    if let Some((_, table_key)) = buffer_before.or(buffer_after)
+        && let Some(locations) = backend.db_table_definitions.get(&table_key)
+        && let Some(location) = pick_single_location(locations.value())
+    {
+        return Some(location);
+    }
+
+    None
+}
+
+pub fn resolve_local_definition_location(
+    uri: &Url,
+    root: Node<'_>,
+    src: &[u8],
+    symbol: &str,
+    offset: usize,
+) -> Option<Location> {
+    let mut sites = Vec::new();
+    collect_definition_sites(root, src, &mut sites);
+
+    let mut best_before: Option<(usize, Range)> = None;
+    let mut best_after: Option<(usize, Range)> = None;
+
+    for site in sites {
+        if !site.label.eq_ignore_ascii_case(symbol) {
+            continue;
+        }
+
+        if site.start_byte <= offset {
+            let should_take = best_before
+                .as_ref()
+                .map(|(start, _)| site.start_byte > *start)
+                .unwrap_or(true);
+            if should_take {
+                best_before = Some((site.start_byte, site.range));
+            }
+        } else {
+            let should_take = best_after
+                .as_ref()
+                .map(|(start, _)| site.start_byte < *start)
+                .unwrap_or(true);
+            if should_take {
+                best_after = Some((site.start_byte, site.range));
+            }
+        }
+    }
+
+    best_before.or(best_after).map(|(_, range)| Location {
+        uri: uri.clone(),
+        range,
+    })
+}
+
+pub async fn resolve_include_function_location(
+    backend: &Backend,
+    uri: &Url,
+    text: &str,
+    root: Node<'_>,
+    symbol: &str,
+    offset: usize,
+) -> Option<Location> {
+    let scope = containing_scope(root, offset)?;
+    let current_path = uri.to_file_path().ok()?;
+    let include_sites = collect_include_sites(text);
+
+    let mut parsed_include_functions: HashMap<PathBuf, Vec<AblDefinitionSite>> = HashMap::new();
+    let mut include_before: Option<(usize, Location)> = None;
+    let mut include_after: Option<(usize, Location)> = None;
+
+    for include in include_sites {
+        if include.start_offset < scope.start || include.start_offset > scope.end {
+            continue;
+        }
+
+        let Some(include_path) = backend
+            .resolve_include_path_for(&current_path, &include.path)
+            .await
+        else {
+            continue;
+        };
+
+        if !parsed_include_functions.contains_key(&include_path) {
+            let Some((include_text, include_tree)) =
+                backend.get_cached_include_parse(&include_path).await
+            else {
+                continue;
+            };
+
+            let mut function_sites = Vec::new();
+            collect_function_definition_sites(
+                include_tree.root_node(),
+                include_text.as_bytes(),
+                &mut function_sites,
+            );
+            parsed_include_functions.insert(include_path.clone(), function_sites);
+        }
+
+        let Some(function_sites) = parsed_include_functions.get(&include_path) else {
+            continue;
+        };
+
+        let Some(include_uri) = Url::from_file_path(&include_path).ok() else {
+            continue;
+        };
+
+        for site in function_sites {
+            if !site.label.eq_ignore_ascii_case(symbol) {
+                continue;
+            }
+
+            let location = Location {
+                uri: include_uri.clone(),
+                range: site.range,
+            };
+
+            if include.start_offset <= offset {
+                let should_take = include_before
+                    .as_ref()
+                    .map(|(site_offset, _)| include.start_offset > *site_offset)
+                    .unwrap_or(true);
+                if should_take {
+                    include_before = Some((include.start_offset, location));
+                }
+            } else {
+                let should_take = include_after
+                    .as_ref()
+                    .map(|(site_offset, _)| include.start_offset < *site_offset)
+                    .unwrap_or(true);
+                if should_take {
+                    include_after = Some((include.start_offset, location));
+                }
+            }
+        }
+    }
+
+    include_before
+        .or(include_after)
+        .map(|(_, location)| location)
+}
