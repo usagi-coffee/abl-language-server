@@ -9,11 +9,9 @@
 
 - `src/main.rs`: process entrypoint, parser initialization, and LSP service bootstrap.
 - `src/backend.rs`: `LanguageServer` implementation and advertised capabilities.
-- `src/handlers/sync.rs`: `didOpen`/`didChange`/`didSave`/`didClose` handlers.
-- `src/handlers/diagnostics.rs`: parse-on-change and publish diagnostics from tree-sitter errors.
-- `src/handlers/completion.rs`: variable completion flow and prefix filtering.
-- `src/analysis/variables.rs`: syntax-tree walk for variable declaration extraction.
-- `src/utils/position.rs`: LSP position/offset conversion and identifier prefix helpers.
+- `src/handlers/*`: LSP request/notification entrypoints. Keep only protocol orchestration, backend calls, and response shaping; avoid heavy parsing/analysis logic here.
+- `src/analysis/*`: Reusable, mostly pure language-analysis logic over text/tree/schema (collectors, resolvers, symbol/type/definition helpers). Shared across handlers.
+- `src/utils/*`: Low-level generic utilities (position/offset math, path helpers, text-sync helpers, tree-sitter traversal helpers) that are not domain-feature specific.
 - `tree-sitter-abl`: dev symlink to `tree-sitter-abl` repository.
 - `tree-sitter-df`: dev symlink to `tree-sitter-df` repository.
 - `playground/*`: manual testing suite.
@@ -26,9 +24,8 @@
   - `cargo clippy --all-targets --all-features -- -D warnings`
 - Run tests:
   - `cargo test`
-- Type-check/build:
+- Type-check/Linting:
   - `cargo check`
-- Clippy
   - `cargo clippy --fix`
 - Build server:
   - `cargo build`
@@ -50,24 +47,20 @@ If `cargo` commands fail with crate download errors, the environment has no netw
 
 ## Conventions
 
-- Keep parser usage centralized through `Backend.parser` (`tokio::sync::Mutex<Parser>`); avoid creating ad-hoc parsers in handlers.
-- Keep document and syntax-tree state in `Backend.docs` and `Backend.trees` keyed by URI.
-- Preserve existing sync mode assumptions:
-  - server advertises `TextDocumentSyncKind::FULL`
-  - `did_change` currently consumes `content_changes[0].text` as full text
 - Prefer small, focused handler logic and move reusable analysis into `src/analysis/*` and `src/utils/*`.
-
-## Change expectations
-
-- Any new user-visible LSP feature should include:
-  - capability wiring in `src/backend.rs`
-  - handler implementation in `src/handlers/*`
-  - state/analysis updates if needed
-  - validation via `cargo test` (or at least `cargo check` when tests are absent)
-  - fix syntax issues with `cargo clippy --fix` and `cargo fmt`
-  - manual example in `playground/`
 - Do not silently degrade diagnostics/completion behavior when adding new features; keep existing flows intact unless change is intentional and documented.
-- Keep logging useful but restrained (`debug!` for development flow, avoid noisy logs in hot paths unless needed for diagnosis).
+
+## Required verification sequence (after every code change)
+
+Run in this exact order:
+1. `cargo check`
+2. `cargo clippy --fix`
+3. `cargo fmt`
+4. `cargo build -r` (manual changes)
+
+Notes:
+- Do not skip `clippy --fix` unless it fails due to an external/tooling issue.
+- If any step fails, report the failure and stop before further edits. Keep logging useful but restrained (`debug!` for development flow, avoid noisy logs in hot paths unless needed for diagnosis).
 
 ## Notes
 
