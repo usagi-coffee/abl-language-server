@@ -1,16 +1,20 @@
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use std::path::PathBuf;
 
 use tower_lsp::lsp_types::*;
 use tree_sitter::Node;
 
 use crate::analysis::buffers::collect_buffer_mappings;
+use crate::analysis::builtins::{is_builtin_function_name, is_builtin_variable_name};
 use crate::analysis::definitions::collect_definition_symbols;
 use crate::analysis::functions::normalize_function_name;
 use crate::analysis::includes::collect_include_sites;
 use crate::analysis::local_tables::collect_local_table_definitions;
+use crate::analysis::types::{BasicType, builtin_type_from_name};
 use crate::backend::Backend;
 use crate::config::DiagnosticFeatureConfig;
+use crate::utils::paths::uri_matches_any_path_pattern;
 use crate::utils::ts::{
     collect_nodes_by_kind, count_nodes_by_kind, direct_child_by_kind, node_to_range,
 };
@@ -36,12 +40,17 @@ pub async fn on_change(
 
     let diagnostics_enabled = backend.config.lock().await.diagnostics.enabled;
     let diagnostics_cfg = backend.config.lock().await.diagnostics.clone();
-    let unknown_variables_enabled =
-        diagnostics_feature_enabled_for_uri(backend, &uri, &diagnostics_cfg.unknown_variables)
-            .await;
-    let unknown_functions_enabled =
-        diagnostics_feature_enabled_for_uri(backend, &uri, &diagnostics_cfg.unknown_functions)
-            .await;
+    let workspace_root = backend.workspace_root.lock().await.clone();
+    let unknown_variables_enabled = diagnostics_feature_enabled_for_uri(
+        &uri,
+        workspace_root.as_deref(),
+        &diagnostics_cfg.unknown_variables,
+    );
+    let unknown_functions_enabled = diagnostics_feature_enabled_for_uri(
+        &uri,
+        workspace_root.as_deref(),
+        &diagnostics_cfg.unknown_functions,
+    );
     let unknown_variables_ignored: HashSet<String> = diagnostics_cfg
         .unknown_variables
         .ignore
@@ -480,9 +489,9 @@ async fn collect_unknown_symbol_diags(
     true
 }
 
-async fn diagnostics_feature_enabled_for_uri(
-    backend: &Backend,
+fn diagnostics_feature_enabled_for_uri(
     uri: &Url,
+    workspace_root: Option<&Path>,
     feature: &DiagnosticFeatureConfig,
 ) -> bool {
     if !feature.enabled {
@@ -491,77 +500,7 @@ async fn diagnostics_feature_enabled_for_uri(
     if feature.exclude.is_empty() {
         return true;
     }
-    !uri_matches_any_exclude_pattern(backend, uri, &feature.exclude).await
-}
-
-async fn uri_matches_any_exclude_pattern(
-    backend: &Backend,
-    uri: &Url,
-    patterns: &[String],
-) -> bool {
-    let Ok(path) = uri.to_file_path() else {
-        return false;
-    };
-    let abs = normalize_path_for_match(path.to_string_lossy().as_ref());
-    let base = path
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_default();
-    let base_norm = normalize_path_for_match(&base);
-    let rel = {
-        let root = backend.workspace_root.lock().await.clone();
-        root.and_then(|r| path.strip_prefix(r).ok().map(|p| p.to_path_buf()))
-            .map(|p| normalize_path_for_match(p.to_string_lossy().as_ref()))
-            .unwrap_or_else(String::new)
-    };
-
-    patterns.iter().any(|p| {
-        let pat = normalize_path_for_match(p);
-        wildcard_match(&pat, &abs)
-            || (!rel.is_empty() && wildcard_match(&pat, &rel))
-            || wildcard_match(&pat, &base_norm)
-    })
-}
-
-fn normalize_path_for_match(raw: &str) -> String {
-    raw.replace('\\', "/").to_ascii_lowercase()
-}
-
-fn wildcard_match(pattern: &str, text: &str) -> bool {
-    if pattern.is_empty() {
-        return text.is_empty();
-    }
-    if !pattern.contains('*') {
-        return text == pattern || text.starts_with(&(pattern.to_string() + "/"));
-    }
-
-    let mut p = 0usize;
-    let mut t = 0usize;
-    let pb = pattern.as_bytes();
-    let tb = text.as_bytes();
-    let mut star_idx: Option<usize> = None;
-    let mut match_idx = 0usize;
-
-    while t < tb.len() {
-        if p < pb.len() && (pb[p] == tb[t]) {
-            p += 1;
-            t += 1;
-        } else if p < pb.len() && pb[p] == b'*' {
-            star_idx = Some(p);
-            p += 1;
-            match_idx = t;
-        } else if let Some(si) = star_idx {
-            p = si + 1;
-            match_idx += 1;
-            t = match_idx;
-        } else {
-            return false;
-        }
-    }
-    while p < pb.len() && pb[p] == b'*' {
-        p += 1;
-    }
-    p == pb.len()
+    !uri_matches_any_path_pattern(uri, workspace_root, &feature.exclude)
 }
 
 fn collect_local_table_field_symbols(
@@ -806,367 +745,6 @@ fn collect_identifier_refs_from_expression(
     }
 }
 
-fn is_builtin_function_name(name_upper: &str) -> bool {
-    const BUILTIN_FUNCTIONS: &[&str] = &[
-        "ABS",
-        "ABSOLUTE",
-        "ACCUM",
-        "ADD-INTERVAL",
-        "ALIAS",
-        "AMBIGUOUS",
-        "ASC",
-        "AUDIT-ENABLED",
-        "AVAILABLE",
-        "BASE64-DECODE",
-        "BASE64-ENCODE",
-        "BOX",
-        "BUFFER-GROUP-ID",
-        "BUFFER-GROUP-NAME",
-        "BUFFER-PARTITION-ID",
-        "BUFFER-TENANT-ID",
-        "BUFFER-TENANT-NAME",
-        "CAN-DO",
-        "CAN-FIND",
-        "CAN-QUERY",
-        "CAN-SET",
-        "CAPS",
-        "CAST",
-        "CHR",
-        "CODEPAGE-CONVERT",
-        "COMPARE",
-        "CONNECTED",
-        "COUNT-OF",
-        "CURRENT-CHANGED",
-        "CURRENT-LANGUAGE",
-        "CURRENT-RESULT-ROW",
-        "CURRENT-VALUE",
-        "DATASERVERS",
-        "DATA-SOURCE-MODIFIED",
-        "DATE",
-        "DATETIME",
-        "DATETIME-TZ",
-        "DAY",
-        "DBCODEPAGE",
-        "DBCOLLATION",
-        "DBNAME",
-        "DBPARAM",
-        "DB-REMOTE-HOST",
-        "DBRESTRICTIONS",
-        "DBTASKID",
-        "DBTYPE",
-        "DBVERSION",
-        "DECIMAL",
-        "DECRYPT",
-        "DEFINED",
-        "DYNAMIC-CAST",
-        "DYNAMIC-CURRENT-VALUE",
-        "DYNAMIC-ENUM",
-        "DYNAMIC-FUNCTION",
-        "DYNAMIC-INVOKE",
-        "DYNAMIC-NEXT-VALUE",
-        "DYNAMIC-PROPERTY",
-        "ENCODE",
-        "ENCRYPT",
-        "ENTERED",
-        "ENTRY",
-        "ERROR",
-        "ETIME",
-        "EXP",
-        "EXTENT",
-        "FILL",
-        "FIRST",
-        "FIRST-OF",
-        "FRAME-COL",
-        "FRAME-DB",
-        "FRAME-DOWN",
-        "FRAME-FIELD",
-        "FRAME-FILE",
-        "FRAME-INDEX",
-        "FRAME-LINE",
-        "FRAME-NAME",
-        "FRAME-ROW",
-        "FRAME-VALUE",
-        "GATEWAYS",
-        "GENERATE-PBE-KEY",
-        "GENERATE-PBE-SALT",
-        "GENERATE-RANDOM-KEY",
-        "GENERATE-UUID",
-        "GET-BITS",
-        "GET-BYTE",
-        "GET-BYTE-ORDER",
-        "GET-BYTES",
-        "GET-CLASS",
-        "GET-CODEPAGE",
-        "GET-CODEPAGES",
-        "GET-COLLATION",
-        "GET-COLLATIONS",
-        "GET-DB-CLIENT",
-        "GET-DOUBLE",
-        "GET-EFFECTIVE-TENANT-ID",
-        "GET-EFFECTIVE-TENANT-NAME",
-        "GET-FLOAT",
-        "GET-INT64",
-        "GET-LONG",
-        "GET-POINTER-VALUE",
-        "GET-SHORT",
-        "GET-SIZE",
-        "GET-STRING",
-        "GET-UNSIGNED-LONG",
-        "GET-UNSIGNED-SHORT",
-        "GO-PENDING",
-        "GUID",
-        "HANDLE",
-        "HASH-CODE",
-        "HEX-DECODE",
-        "HEX-ENCODE",
-        "IF",
-        "INDEX",
-        "INPUT",
-        "INT64",
-        "INTEGER",
-        "INTERVAL",
-        "IS-ATTR-SPACE",
-        "IS-CODEPAGE-FIXED",
-        "IS-COLUMN-CODEPAGE",
-        "IS-DB-MULTI-TENANT",
-        "IS-LEAD-BYTE",
-        "ISO-DATE",
-        "KBLABEL",
-        "KEYCODE",
-        "KEYFUNCTION",
-        "KEYLABEL",
-        "KEYWORD",
-        "KEYWORD-ALL",
-        "LAST",
-        "LASTKEY",
-        "LAST-OF",
-        "LC",
-        "LDBNAME",
-        "LEFT-TRIM",
-        "LENGTH",
-        "LIBRARY",
-        "LINE-COUNTER",
-        "LIST-EVENTS",
-        "LIST-QUERY-ATTRS",
-        "LIST-SET-ATTRS",
-        "LIST-WIDGETS",
-        "LOCKED",
-        "LOG",
-        "LOGICAL",
-        "LOOKUP",
-        "MAXIMUM",
-        "MD5-DIGEST",
-        "MEMBER",
-        "MESSAGE-DIGEST",
-        "MESSAGE-LINES",
-        "MINIMUM",
-        "MONTH",
-        "MTIME",
-        "NEXT-VALUE",
-        "NORMALIZE",
-        "NOT",
-        "NOW",
-        "NUM-ALIASES",
-        "NUM-DBS",
-        "NUM-ENTRIES",
-        "NUM-RESULTS",
-        "OPSYS",
-        "OS-DRIVES",
-        "OS-ERROR",
-        "OS-GETENV",
-        "PAGE-NUMBER",
-        "PAGE-SIZE",
-        "PDBNAME",
-        "PROC-HANDLE",
-        "PROC-STATUS",
-        "PROCESS-ARCHITECTURE",
-        "PROGRAM-NAME",
-        "PROGRESS",
-        "PROMSGS",
-        "PROPATH",
-        "PROVERSION",
-        "QUERY-OFF-END",
-        "QUOTER",
-        "R-INDEX",
-        "RANDOM",
-        "RAW",
-        "RECID",
-        "RECORD-LENGTH",
-        "REJECTED",
-        "REPLACE",
-        "RETRY",
-        "RETURN-VALUE",
-        "RGB-VALUE",
-        "RIGHT-TRIM",
-        "ROUND",
-        "ROW-STATE",
-        "ROWID",
-        "SCREEN-LINES",
-        "SDBNAME",
-        "SEARCH",
-        "SEEK",
-        "SET-DB-CLIENT",
-        "SET-EFFECTIVE-TENANT",
-        "SETUSERID",
-        "SHA1-DIGEST",
-        "SQRT",
-        "SSL-SERVER-NAME",
-        "STRING",
-        "SUBSTITUTE",
-        "SUBSTRING",
-        "SUPER",
-        "TENANT-ID",
-        "TENANT-NAME",
-        "TENANT-NAME-TO-ID",
-        "TERMINAL",
-        "TIME",
-        "TIMEZONE",
-        "TODAY",
-        "TO-ROWID",
-        "TRANSACTION",
-        "TRIM",
-        "TRUNCATE",
-        "TYPE-OF",
-        "UNBOX",
-        "USERID",
-        "VALID-EVENT",
-        "VALID-HANDLE",
-        "VALID-OBJECT",
-        "WEEKDAY",
-        "WIDGET-HANDLE",
-        "YEAR",
-    ];
-    const SQL_BUILTIN_FUNCTIONS: &[&str] = &[
-        "ABS",
-        "ACOS",
-        "ADD_MONTHS",
-        "ASCII",
-        "ASIN",
-        "ATAN",
-        "ATAN2",
-        "AVG",
-        "CASE",
-        "CAST",
-        "CDC_GET_CHANGED_COLUMNS",
-        "CDC_IS_COLUMN_CHANGED",
-        "CEILING",
-        "CHAR",
-        "CHR",
-        "COALESCE",
-        "CONCAT",
-        "CONVERT",
-        "COS",
-        "COUNT",
-        "CURDATE",
-        "CURTIME",
-        "CURRVAL",
-        "DATABASE",
-        "DAYNAME",
-        "DAYOFMONTH",
-        "DAYOFWEEK",
-        "DAYOFYEAR",
-        "DB_NAME",
-        "DECODE",
-        "DEGREES",
-        "EXP",
-        "FLOOR",
-        "GREATEST",
-        "HOUR",
-        "IFNULL",
-        "INITCAP",
-        "INSERT",
-        "INSTR",
-        "ISOWEEKDAY",
-        "ISOWEEK",
-        "ISOYEAR",
-        "LAST_DAY",
-        "LCASE",
-        "LEAST",
-        "LEFT",
-        "LENGTH",
-        "LOCATE",
-        "LOG10",
-        "LOWER",
-        "LPAD",
-        "LTRIM",
-        "MAX",
-        "MIN",
-        "MINUTE",
-        "MOD",
-        "MONTH",
-        "MONTHNAME",
-        "MONTHS_BETWEEN",
-        "NEXT_DAY",
-        "NEXTVAL",
-        "NOW",
-        "NULLIF",
-        "NVL",
-        "PI",
-        "POWER",
-        "PREFIX",
-        "PRO_ARR_DESCAPE",
-        "PRO_ARR_ESCAPE",
-        "PRO_ELEMENT",
-        "QUARTER",
-        "RADIANS",
-        "RAND",
-        "REPEAT",
-        "REPLACE",
-        "RIGHT",
-        "ROUND",
-        "ROWID",
-        "RPAD",
-        "RTRIM",
-        "SECOND",
-        "SIGN",
-        "SIN",
-        "SQRT",
-        "SUBSTR",
-        "SUBSTRING",
-        "SUFFIX",
-        "SUM",
-        "SYSDATE",
-        "SYSTIME",
-        "SYSTIMESTAMP",
-        "TAN",
-        "TO_CHAR",
-        "TO_DATE",
-        "TO_NUMBER",
-        "TO_TIME",
-        "TO_TIMESTAMP",
-        "TRANSLATE",
-        "UCASE",
-        "UPPER",
-        "USER",
-        "WEEK",
-        "YEAR",
-    ];
-    BUILTIN_FUNCTIONS.contains(&name_upper) || SQL_BUILTIN_FUNCTIONS.contains(&name_upper)
-}
-
-fn is_builtin_variable_name(name_upper: &str) -> bool {
-    const BUILTIN_VARIABLES: &[&str] = &[
-        "SESSION",
-        "ERROR-STATUS",
-        "THIS-PROCEDURE",
-        "SOURCE-PROCEDURE",
-        "TARGET-PROCEDURE",
-        "ENDKEY",
-        "CURRENT-WINDOW",
-        "DEFAULT-WINDOW",
-        "ACTIVE-WINDOW",
-        "SELF",
-        "SUPER",
-        "THIS-OBJECT",
-    ];
-    const GLOBAL_VARIABLE_EXCEPTIONS: &[&str] = &[
-        // Project-level globals intentionally allowed without local declaration.
-        "BATCHRUN",
-    ];
-
-    BUILTIN_VARIABLES.contains(&name_upper) || GLOBAL_VARIABLE_EXCEPTIONS.contains(&name_upper)
-}
-
 struct IdentifierRef {
     name_upper: String,
     display_name: String,
@@ -1178,27 +756,6 @@ struct FunctionCallSite {
     name_upper: String,
     arg_count: usize,
     range: Range,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum BasicType {
-    Character,
-    Numeric,
-    Logical,
-    DateLike,
-    Handle,
-}
-
-impl BasicType {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Character => "CHARACTER",
-            Self::Numeric => "NUMERIC",
-            Self::Logical => "LOGICAL",
-            Self::DateLike => "DATE",
-            Self::Handle => "HANDLE",
-        }
-    }
 }
 
 struct TypedBinding {
@@ -1253,7 +810,7 @@ fn collect_typed_bindings(node: Node<'_>, src: &[u8], out: &mut Vec<TypedBinding
             node.child_by_field_name("type"),
         )
         && let (Ok(name), Ok(raw_ty)) = (name_node.utf8_text(src), type_node.utf8_text(src))
-        && let Some(ty) = parse_basic_type(raw_ty)
+        && let Some(ty) = builtin_type_from_name(raw_ty)
     {
         out.push(TypedBinding {
             name_upper: name.trim().to_ascii_uppercase(),
@@ -1277,7 +834,7 @@ fn collect_function_return_types(node: Node<'_>, src: &[u8], out: &mut HashMap<S
         node.child_by_field_name("name"),
         node.child_by_field_name("type"),
     ) && let (Ok(name), Ok(raw_ty)) = (name_node.utf8_text(src), type_node.utf8_text(src))
-        && let Some(ty) = parse_basic_type(raw_ty)
+        && let Some(ty) = builtin_type_from_name(raw_ty)
     {
         out.insert(normalize_function_name(name), ty);
     }
@@ -1503,7 +1060,7 @@ fn collect_param_types_by_kind(
         out.push(
             node.child_by_field_name("type")
                 .and_then(|n| n.utf8_text(src).ok())
-                .and_then(parse_basic_type),
+                .and_then(builtin_type_from_name),
         );
         return;
     }
@@ -1539,7 +1096,7 @@ fn collect_param_types_recursive(
         out.push(
             node.child_by_field_name("type")
                 .and_then(|n| n.utf8_text(src).ok())
-                .and_then(parse_basic_type),
+                .and_then(builtin_type_from_name),
         );
         return;
     }
@@ -1565,25 +1122,6 @@ fn argument_exprs(arguments_node: Node<'_>) -> Vec<Node<'_>> {
         }
     }
     out
-}
-
-fn parse_basic_type(raw: &str) -> Option<BasicType> {
-    let upper = raw
-        .split_whitespace()
-        .next()
-        .unwrap_or_default()
-        .to_ascii_uppercase();
-
-    match upper.as_str() {
-        "CHARACTER" | "CHAR" | "LONGCHAR" | "CLOB" => Some(BasicType::Character),
-        "INTEGER" | "INT" | "INT64" | "DECIMAL" | "DEC" | "NUMERIC" | "NUM" => {
-            Some(BasicType::Numeric)
-        }
-        "LOGICAL" | "LOG" | "BOOLEAN" => Some(BasicType::Logical),
-        "DATE" | "DATETIME" | "DATETIME-TZ" => Some(BasicType::DateLike),
-        "HANDLE" | "COM-HANDLE" | "WIDGET-HANDLE" => Some(BasicType::Handle),
-        _ => None,
-    }
 }
 
 fn collect_ts_error_diags(node: Node, out: &mut Vec<Diagnostic>, limit: usize) {
@@ -1623,8 +1161,9 @@ fn collect_ts_error_diags(node: Node, out: &mut Vec<Diagnostic>, limit: usize) {
 mod tests {
     use super::{
         collect_assignment_type_diags, collect_function_arities,
-        collect_function_call_arg_type_diags, collect_function_calls, is_builtin_function_name,
+        collect_function_call_arg_type_diags, collect_function_calls,
     };
+    use crate::analysis::builtins::is_builtin_function_name;
     use std::collections::HashMap;
 
     #[test]

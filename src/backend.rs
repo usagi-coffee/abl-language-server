@@ -4,8 +4,7 @@ use log::{debug, warn};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::ops::Deref;
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use tokio::sync::Mutex as AsyncMutex;
@@ -15,6 +14,7 @@ use tower_lsp::{Client, LanguageServer};
 use tree_sitter::{Language, Parser, Tree};
 
 use crate::config::{AblConfig, find_workspace_root, load_from_workspace_root};
+use crate::utils::paths::{resolve_dumpfile_path, resolve_include_path};
 
 #[derive(Clone)]
 pub struct DbFieldInfo {
@@ -639,135 +639,4 @@ fn is_abl_toml_uri(uri: &Url) -> bool {
         .ok()
         .and_then(|path| path.file_name().map(|name| name == "abl.toml"))
         .unwrap_or(false)
-}
-
-fn resolve_dumpfile_path(
-    workspace_root: Option<&Path>,
-    dumpfile: &str,
-) -> Option<std::path::PathBuf> {
-    resolve_config_path(workspace_root, dumpfile)
-}
-
-fn resolve_include_path(
-    workspace_root: Option<&Path>,
-    propath: &[String],
-    current_file: &Path,
-    include: &str,
-) -> Option<std::path::PathBuf> {
-    let candidate = std::path::PathBuf::from(include);
-    if candidate.is_absolute() {
-        return Some(candidate);
-    }
-
-    for entry in propath {
-        let Some(base) = resolve_config_path(workspace_root, entry) else {
-            continue;
-        };
-        let from_propath = base.join(include);
-        if from_propath.exists() {
-            return Some(from_propath);
-        }
-    }
-
-    if let Some(current_dir) = current_file.parent() {
-        let from_current = current_dir.join(include);
-        if from_current.exists() {
-            return Some(from_current);
-        }
-    }
-
-    if let Some(root) = workspace_root {
-        let from_root = root.join(include);
-        if from_root.exists() {
-            return Some(from_root);
-        }
-    }
-
-    None
-}
-
-fn resolve_config_path(workspace_root: Option<&Path>, value: &str) -> Option<std::path::PathBuf> {
-    let candidate = std::path::PathBuf::from(value);
-    if candidate.is_absolute() {
-        return Some(candidate);
-    }
-    workspace_root.map(|root| root.join(candidate))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::resolve_include_path;
-    use std::fs;
-
-    #[test]
-    fn include_resolution_uses_propath_order() {
-        let base = std::env::temp_dir().join(format!(
-            "abl_ls_backend_test_{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("epoch")
-                .as_nanos()
-        ));
-        let workspace = base.join("workspace");
-        let propath_a = base.join("a");
-        let propath_b = base.join("b");
-        let current_dir = base.join("current");
-        fs::create_dir_all(&workspace).expect("create workspace");
-        fs::create_dir_all(&propath_a).expect("create propath a");
-        fs::create_dir_all(&propath_b).expect("create propath b");
-        fs::create_dir_all(&current_dir).expect("create current dir");
-
-        let include = "include.i";
-        let a_file = propath_a.join(include);
-        let b_file = propath_b.join(include);
-        let current_file = current_dir.join("main.p");
-        let current_include = current_dir.join(include);
-        let root_include = workspace.join(include);
-        fs::write(&a_file, "/* a */").expect("write a");
-        fs::write(&b_file, "/* b */").expect("write b");
-        fs::write(&current_file, "").expect("write current");
-        fs::write(&current_include, "/* current */").expect("write current include");
-        fs::write(&root_include, "/* root */").expect("write root include");
-
-        let propath = vec![propath_a.to_string_lossy().to_string(), ".".to_string()];
-        let resolved = resolve_include_path(Some(&workspace), &propath, &current_file, include)
-            .expect("resolved include");
-        assert_eq!(resolved, a_file);
-
-        let _ = fs::remove_dir_all(&base);
-    }
-
-    #[test]
-    fn include_resolution_falls_back_to_current_then_workspace() {
-        let base = std::env::temp_dir().join(format!(
-            "abl_ls_backend_test_{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("epoch")
-                .as_nanos()
-        ));
-        let workspace = base.join("workspace");
-        let current_dir = base.join("current");
-        fs::create_dir_all(&workspace).expect("create workspace");
-        fs::create_dir_all(&current_dir).expect("create current dir");
-
-        let include = "include.i";
-        let current_file = current_dir.join("main.p");
-        let current_include = current_dir.join(include);
-        let root_include = workspace.join(include);
-        fs::write(&current_file, "").expect("write current");
-        fs::write(&current_include, "/* current */").expect("write current include");
-        fs::write(&root_include, "/* root */").expect("write root include");
-
-        let resolved =
-            resolve_include_path(Some(&workspace), &[], &current_file, include).expect("resolved");
-        assert_eq!(resolved, current_include);
-
-        fs::remove_file(&current_include).expect("remove current include");
-        let resolved =
-            resolve_include_path(Some(&workspace), &[], &current_file, include).expect("resolved");
-        assert_eq!(resolved, root_include);
-
-        let _ = fs::remove_dir_all(&base);
-    }
 }

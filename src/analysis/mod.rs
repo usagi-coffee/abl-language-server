@@ -1,4 +1,5 @@
 pub mod buffers;
+pub mod builtins;
 pub mod completion;
 pub mod definitions;
 pub mod df;
@@ -8,3 +9,4 @@ pub mod local_tables;
 pub mod schema;
 pub mod schema_lookup;
 pub mod scopes;
+pub mod types;
