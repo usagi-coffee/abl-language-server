@@ -31,12 +31,9 @@ async fn main() {
     let (service, socket) = LspService::build(|client| Backend {
         client,
         state: Arc::new(BackendState {
-            docs: DashMap::new(),
-            trees: DashMap::new(),
-            doc_versions: DashMap::new(),
             abl_language,
-            abl_parsers: DashMap::new(),
             df_parser: Mutex::new(df_parser),
+            documents: DashMap::new(),
             workspace_root: Mutex::new(None),
             config: Mutex::new(AblConfig::default()),
             db_tables: DashSet::new(),
@@ -45,7 +42,8 @@ async fn main() {
             db_field_definitions: DashMap::new(),
             db_index_definitions: DashMap::new(),
             db_fields_by_table: DashMap::new(),
-            diag_tasks: Mutex::new(std::collections::HashMap::new()),
+            include_completion_cache: DashMap::new(),
+            include_parse_cache: DashMap::new(),
         }),
     })
     .finish();

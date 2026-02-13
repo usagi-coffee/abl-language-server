@@ -20,11 +20,11 @@ impl Backend {
         let uri = params.text_document_position_params.text_document.uri;
         let pos = params.text_document_position_params.position;
 
-        let text = match self.docs.get(&uri) {
+        let text = match self.get_document_text(&uri) {
             Some(t) => t,
             None => return Ok(None),
         };
-        let tree = match self.trees.get(&uri) {
+        let tree = match self.get_document_tree_or_parse(&uri) {
             Some(t) => t,
             None => return Ok(None),
         };
@@ -81,7 +81,6 @@ impl Backend {
         let current_path = uri.to_file_path().ok()?;
         let include_sites = collect_include_sites(text);
         let mut seen_files = HashSet::new();
-        let mut include_parser = self.new_abl_parser();
 
         for include in include_sites {
             if include.start_offset < scope.start || include.start_offset > scope.end {
@@ -96,10 +95,9 @@ impl Backend {
             if !seen_files.insert(include_path.clone()) {
                 continue;
             }
-            let Ok(include_text) = tokio::fs::read_to_string(&include_path).await else {
-                continue;
-            };
-            let Some(include_tree) = include_parser.parse(&include_text, None) else {
+            let Some((include_text, include_tree)) =
+                self.get_cached_include_parse(&include_path).await
+            else {
                 continue;
             };
             if let Some(sig) =

@@ -27,8 +27,7 @@ pub async fn on_change(
         return;
     }
 
-    backend.doc_versions.insert(uri.clone(), version);
-    backend.docs.insert(uri.clone(), text.to_owned());
+    backend.set_document_text_version(&uri, version, text.to_owned(), false);
 
     if !is_latest_version(backend, &uri, version) {
         return;
@@ -36,14 +35,10 @@ pub async fn on_change(
 
     let diagnostics_enabled = backend.config.lock().await.diagnostics.enabled;
     let parsed_tree = {
-        let parser_mutex = backend
-            .abl_parsers
-            .entry(uri.clone())
-            .or_insert_with(|| std::sync::Mutex::new(backend.new_abl_parser()));
-        let mut parser = parser_mutex.lock().expect("ABL parser mutex poisoned");
-        if !is_latest_version(backend, &uri, version) {
+        let Some(doc) = backend.documents.get_mut(&uri) else {
             return;
-        }
+        };
+        let mut parser = doc.parser.lock().expect("ABL parser mutex poisoned");
         parser.parse(text.clone(), None)
     };
     let tree = match parsed_tree {
@@ -72,7 +67,7 @@ pub async fn on_change(
         if !is_latest_version(backend, &uri, version) {
             return;
         }
-        backend.trees.insert(uri, tree);
+        backend.set_document_tree_if_version(&uri, version, tree);
         return;
     }
 
@@ -122,7 +117,7 @@ pub async fn on_change(
     if !is_latest_version(backend, &uri, version) {
         return;
     }
-    backend.trees.insert(uri, tree);
+    backend.set_document_tree_if_version(&uri, version, tree);
 }
 
 async fn collect_function_call_arity_diags(
@@ -145,7 +140,6 @@ async fn collect_function_call_arity_diags(
     if include_from_includes && let Ok(current_path) = uri.to_file_path() {
         let include_sites = collect_include_sites(text);
         let mut seen = HashSet::<PathBuf>::new();
-        let mut include_parser = backend.new_abl_parser();
         for include in include_sites {
             if !is_latest_version(backend, uri, version) {
                 return false;
@@ -160,16 +154,13 @@ async fn collect_function_call_arity_diags(
                 continue;
             }
 
-            let Ok(include_text) = tokio::fs::read_to_string(&path).await else {
+            let Some((include_text, include_tree)) = backend.get_cached_include_parse(&path).await
+            else {
                 continue;
             };
             if !is_latest_version(backend, uri, version) {
                 return false;
             }
-            let include_tree = include_parser.parse(&include_text, None);
-            let Some(include_tree) = include_tree else {
-                continue;
-            };
             if !is_latest_version(backend, uri, version) {
                 return false;
             }
@@ -221,14 +212,14 @@ async fn collect_function_call_arity_diags(
 }
 
 fn should_accept_version(backend: &Backend, uri: &Url, version: i32) -> bool {
-    match backend.doc_versions.get(uri) {
-        Some(current) => *current <= version,
+    match backend.documents.get(uri) {
+        Some(current) => current.version <= version,
         None => true,
     }
 }
 
 fn is_latest_version(backend: &Backend, uri: &Url, version: i32) -> bool {
-    matches!(backend.doc_versions.get(uri), Some(current) if *current == version)
+    matches!(backend.documents.get(uri), Some(current) if current.version == version)
 }
 
 fn collect_function_arities(node: Node<'_>, src: &[u8], out: &mut HashMap<String, Vec<usize>>) {
@@ -370,7 +361,6 @@ async fn collect_unknown_symbol_diags(
     if include_semantic_diags && let Ok(current_path) = uri.to_file_path() {
         let include_sites = collect_include_sites(text);
         let mut seen = HashSet::<PathBuf>::new();
-        let mut include_parser = backend.new_abl_parser();
         for include in include_sites {
             if !is_latest_version(backend, uri, version) {
                 return false;
@@ -384,15 +374,13 @@ async fn collect_unknown_symbol_diags(
             if !seen.insert(path.clone()) {
                 continue;
             }
-            let Ok(include_text) = tokio::fs::read_to_string(&path).await else {
+            let Some((include_text, include_tree)) = backend.get_cached_include_parse(&path).await
+            else {
                 continue;
             };
             if !is_latest_version(backend, uri, version) {
                 return false;
             }
-            let Some(include_tree) = include_parser.parse(&include_text, None) else {
-                continue;
-            };
             collect_known_symbols(
                 include_tree.root_node(),
                 include_text.as_bytes(),

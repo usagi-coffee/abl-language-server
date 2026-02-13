@@ -20,7 +20,6 @@ DEFINE VARIABLE lv_before AS CHARACTER NO-UNDO.
 DEFINE VARIABLE lv_counter AS INTEGER NO-UNDO.
 DEFINE VARIABLE lv_name AS CHAR NO-UNDO.
 
-
 UPPER('x').
 
 // Unknown symbol diagnostics should be case-insensitive.
@@ -52,7 +51,6 @@ DEFINE TEMP-TABLE tt_local NO-UNDO
 DEFINE BUFFER b_tt FOR tt_local.
 lv_name = tt_local.name.
 lv_name = b_tt.name.
-
 
 // Hover should work
 MESSAGE "index name" z9zw_mstr.z9zw_name VIEW-AS ALERT-BOX INFO BUTTONS OK.

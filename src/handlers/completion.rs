@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
@@ -13,6 +14,7 @@ use crate::analysis::includes::collect_include_sites;
 use crate::analysis::local_tables::collect_local_table_definitions;
 use crate::analysis::scopes::containing_scope;
 use crate::backend::Backend;
+use crate::backend::CachedCompletionSymbol;
 use crate::backend::DbFieldInfo;
 use crate::utils::position::{ascii_ident_prefix, lsp_pos_to_utf8_byte_offset};
 
@@ -40,23 +42,13 @@ impl Backend {
             return Ok(Some(CompletionResponse::Array(vec![])));
         }
 
-        let text = match self.docs.get(&uri) {
-            Some(t) => t.value().clone(),
+        let text = match self.get_document_text(&uri) {
+            Some(t) => t,
             None => return Ok(Some(CompletionResponse::Array(vec![]))),
         };
-        let tree = if let Some(t) = self.trees.get(&uri) {
-            t.value().clone()
-        } else {
-            let parser_mutex = self
-                .abl_parsers
-                .entry(uri.clone())
-                .or_insert_with(|| std::sync::Mutex::new(self.new_abl_parser()));
-            let mut parser = parser_mutex.lock().expect("ABL parser mutex poisoned");
-            let Some(parsed) = parser.parse(text.clone(), None) else {
-                return Ok(Some(CompletionResponse::Array(vec![])));
-            };
-            self.trees.insert(uri.clone(), parsed.clone());
-            parsed
+        let tree = match self.get_document_tree_or_parse(&uri) {
+            Some(t) => t,
+            None => return Ok(Some(CompletionResponse::Array(vec![]))),
         };
 
         let offset = match lsp_pos_to_utf8_byte_offset(&text, pos) {
@@ -226,7 +218,6 @@ impl Backend {
         let include_sites = collect_include_sites(text);
         let mut parsed_files = HashSet::new();
         let mut out = Vec::new();
-        let mut include_parser = self.new_abl_parser();
 
         for include in include_sites {
             if include.start_offset > offset {
@@ -243,30 +234,69 @@ impl Backend {
                 continue;
             }
 
-            let Ok(include_text) = tokio::fs::read_to_string(&include_path).await else {
-                continue;
-            };
-            let include_tree = include_parser.parse(&include_text, None);
-            let Some(include_tree) = include_tree else {
-                continue;
-            };
-            let include_root = include_tree.root_node();
-
-            let mut symbols = Vec::new();
-            collect_definition_symbols(include_root, include_text.as_bytes(), &mut symbols);
             out.extend(
-                symbols
-                    .into_iter()
-                    .filter(|s| !is_parameter_symbol_at_byte(include_root, s.start_byte))
-                    .map(|s| CompletionCandidate {
-                        label: s.label,
-                        kind: s.kind,
-                        detail: s.detail,
-                    }),
+                self.get_cached_include_completion_candidates(&include_path)
+                    .await,
             );
         }
 
         out
+    }
+
+    async fn get_cached_include_completion_candidates(
+        &self,
+        include_path: &Path,
+    ) -> Vec<CompletionCandidate> {
+        let modified = tokio::fs::metadata(include_path)
+            .await
+            .ok()
+            .and_then(|m| m.modified().ok());
+        if let Some(entry) = self.include_completion_cache.get(include_path)
+            && entry.modified == modified
+        {
+            return entry
+                .symbols
+                .iter()
+                .map(|s| CompletionCandidate {
+                    label: s.label.clone(),
+                    kind: s.kind,
+                    detail: s.detail.clone(),
+                })
+                .collect();
+        }
+
+        let Some((include_text_cached, include_tree)) =
+            self.get_cached_include_parse(include_path).await
+        else {
+            return Vec::new();
+        };
+        let include_root = include_tree.root_node();
+        let mut symbols = Vec::new();
+        collect_definition_symbols(include_root, include_text_cached.as_bytes(), &mut symbols);
+        let filtered = symbols
+            .into_iter()
+            .filter(|s| !is_parameter_symbol_at_byte(include_root, s.start_byte))
+            .map(|s| CachedCompletionSymbol {
+                label: s.label,
+                kind: s.kind,
+                detail: s.detail,
+            })
+            .collect::<Vec<_>>();
+        self.include_completion_cache.insert(
+            include_path.to_path_buf(),
+            crate::backend::IncludeCompletionCacheEntry {
+                modified,
+                symbols: filtered.clone(),
+            },
+        );
+        filtered
+            .into_iter()
+            .map(|s| CompletionCandidate {
+                label: s.label,
+                kind: s.kind,
+                detail: s.detail,
+            })
+            .collect()
     }
 }
 

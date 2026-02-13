@@ -1,11 +1,14 @@
+use dashmap::mapref::entry::Entry;
 use dashmap::{DashMap, DashSet};
 use log::{debug, warn};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::ops::Deref;
 use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
+use std::time::SystemTime;
 use tokio::sync::Mutex as AsyncMutex;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
@@ -23,13 +26,40 @@ pub struct DbFieldInfo {
     pub description: Option<String>,
 }
 
+#[derive(Clone)]
+pub struct CachedCompletionSymbol {
+    pub label: String,
+    pub kind: CompletionItemKind,
+    pub detail: String,
+}
+
+pub struct IncludeCompletionCacheEntry {
+    pub modified: Option<SystemTime>,
+    pub symbols: Vec<CachedCompletionSymbol>,
+}
+
+pub struct IncludeParseCacheEntry {
+    pub modified: Option<SystemTime>,
+    pub text: Arc<String>,
+    pub tree: Tree,
+}
+
+pub struct DiagTask {
+    pub handle: tokio::task::JoinHandle<()>,
+}
+
+pub struct DocumentState {
+    pub text: String,
+    pub version: i32,
+    pub tree: Option<Tree>,
+    pub parser: StdMutex<Parser>,
+    pub diag_task: Option<DiagTask>,
+}
+
 pub struct BackendState {
     pub abl_language: Language,
-    pub abl_parsers: DashMap<Url, StdMutex<Parser>>,
     pub df_parser: AsyncMutex<Parser>,
-    pub trees: DashMap<Url, Tree>,
-    pub docs: DashMap<Url, String>,
-    pub doc_versions: DashMap<Url, i32>,
+    pub documents: DashMap<Url, DocumentState>,
     pub workspace_root: AsyncMutex<Option<std::path::PathBuf>>,
     pub config: AsyncMutex<AblConfig>,
     pub db_tables: DashSet<String>,
@@ -38,7 +68,8 @@ pub struct BackendState {
     pub db_field_definitions: DashMap<String, Vec<Location>>,
     pub db_index_definitions: DashMap<String, Vec<Location>>,
     pub db_fields_by_table: DashMap<String, Vec<DbFieldInfo>>,
-    pub diag_tasks: AsyncMutex<HashMap<Url, tokio::task::JoinHandle<()>>>,
+    pub include_completion_cache: DashMap<PathBuf, IncludeCompletionCacheEntry>,
+    pub include_parse_cache: DashMap<PathBuf, IncludeParseCacheEntry>,
 }
 
 #[derive(Clone)]
@@ -76,7 +107,7 @@ impl LanguageServer for Backend {
                 text_document_sync: Some(TextDocumentSyncCapability::Options(
                     TextDocumentSyncOptions {
                         open_close: Some(true),
-                        change: Some(TextDocumentSyncKind::INCREMENTAL),
+                        change: Some(TextDocumentSyncKind::FULL),
                         save: Some(TextDocumentSyncSaveOptions::SaveOptions(SaveOptions {
                             include_text: Some(true),
                         })),
@@ -237,12 +268,105 @@ impl LanguageServer for Backend {
 }
 
 impl Backend {
+    fn new_document_state(&self, text: String, version: i32) -> DocumentState {
+        DocumentState {
+            text,
+            version,
+            tree: None,
+            parser: StdMutex::new(self.new_abl_parser()),
+            diag_task: None,
+        }
+    }
+
     pub fn new_abl_parser(&self) -> Parser {
         let mut parser = Parser::new();
         parser
             .set_language(&self.abl_language)
             .expect("Error loading abl parser");
         parser
+    }
+
+    pub fn get_document_text(&self, uri: &Url) -> Option<String> {
+        self.documents.get(uri).map(|d| d.text.clone())
+    }
+
+    pub fn get_document_version(&self, uri: &Url) -> Option<i32> {
+        self.documents.get(uri).map(|d| d.version)
+    }
+
+    pub fn set_document_text_version(
+        &self,
+        uri: &Url,
+        version: i32,
+        text: String,
+        clear_tree: bool,
+    ) {
+        match self.documents.entry(uri.clone()) {
+            Entry::Occupied(mut entry) => {
+                let doc = entry.get_mut();
+                doc.version = version;
+                doc.text = text;
+                if clear_tree {
+                    doc.tree = None;
+                }
+            }
+            Entry::Vacant(entry) => {
+                let mut doc = self.new_document_state(text, version);
+                if clear_tree {
+                    doc.tree = None;
+                }
+                entry.insert(doc);
+            }
+        }
+    }
+
+    pub fn get_document_tree_or_parse(&self, uri: &Url) -> Option<Tree> {
+        let mut doc = self.documents.get_mut(uri)?;
+        if let Some(tree) = &doc.tree {
+            return Some(tree.clone());
+        }
+        let text = doc.text.clone();
+        let parsed = {
+            let mut parser = doc.parser.lock().expect("ABL parser mutex poisoned");
+            parser.parse(text.as_str(), None)?
+        };
+        doc.tree = Some(parsed.clone());
+        Some(parsed)
+    }
+
+    pub fn set_document_tree_if_version(&self, uri: &Url, version: i32, tree: Tree) {
+        if let Some(mut doc) = self.documents.get_mut(uri)
+            && doc.version == version
+        {
+            doc.tree = Some(tree);
+        }
+    }
+
+    pub fn take_document_diag_task(&self, uri: &Url) -> Option<DiagTask> {
+        let mut doc = self.documents.get_mut(uri)?;
+        doc.diag_task.take()
+    }
+
+    pub fn try_set_document_diag_task(
+        &self,
+        uri: &Url,
+        _include_semantic_diags: bool,
+        handle: tokio::task::JoinHandle<()>,
+    ) {
+        match self.documents.entry(uri.clone()) {
+            Entry::Occupied(mut entry) => {
+                let doc = entry.get_mut();
+                if let Some(prev) = doc.diag_task.take() {
+                    prev.handle.abort();
+                }
+                doc.diag_task = Some(DiagTask { handle });
+            }
+            Entry::Vacant(entry) => {
+                let mut doc = self.new_document_state(String::new(), -1);
+                doc.diag_task = Some(DiagTask { handle });
+                entry.insert(doc);
+            }
+        }
     }
 
     pub async fn reload_workspace_config(&self) {
@@ -291,6 +415,35 @@ impl Backend {
         let workspace_root = self.workspace_root.lock().await.clone();
         let propath = self.config.lock().await.propath.clone();
         resolve_include_path(workspace_root.as_deref(), &propath, current_file, include)
+    }
+
+    pub async fn get_cached_include_parse(
+        &self,
+        include_path: &Path,
+    ) -> Option<(Arc<String>, Tree)> {
+        let modified = tokio::fs::metadata(include_path)
+            .await
+            .ok()
+            .and_then(|m| m.modified().ok());
+        if let Some(entry) = self.include_parse_cache.get(include_path)
+            && entry.modified == modified
+        {
+            return Some((entry.text.clone(), entry.tree.clone()));
+        }
+
+        let include_text = tokio::fs::read_to_string(include_path).await.ok()?;
+        let mut parser = self.new_abl_parser();
+        let include_tree = parser.parse(include_text.as_str(), None)?;
+        let text = Arc::new(include_text);
+        self.include_parse_cache.insert(
+            include_path.to_path_buf(),
+            IncludeParseCacheEntry {
+                modified,
+                text: text.clone(),
+                tree: include_tree.clone(),
+            },
+        );
+        Some((text, include_tree))
     }
 
     async fn reload_db_tables(&self, workspace_root: Option<&Path>, dumpfiles: &[String]) {

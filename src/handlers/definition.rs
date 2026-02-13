@@ -47,7 +47,7 @@ impl Backend {
         let uri = params.text_document_position_params.text_document.uri;
         let pos = params.text_document_position_params.position;
 
-        let text = match self.docs.get(&uri) {
+        let text = match self.get_document_text(&uri) {
             Some(t) => t,
             None => return Ok(None),
         };
@@ -60,7 +60,7 @@ impl Backend {
             return Ok(Some(GotoDefinitionResponse::Scalar(location)));
         }
 
-        let tree = match self.trees.get(&uri) {
+        let tree = match self.get_document_tree_or_parse(&uri) {
             Some(t) => t,
             None => return Ok(None),
         };

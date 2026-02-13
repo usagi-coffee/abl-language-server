@@ -9,13 +9,11 @@ const DID_CHANGE_DIAG_DEBOUNCE_MS: u64 = 200;
 
 impl Backend {
     pub async fn handle_did_open(&self, params: DidOpenTextDocumentParams) {
-        self.doc_versions.insert(
-            params.text_document.uri.clone(),
+        self.set_document_text_version(
+            &params.text_document.uri,
             params.text_document.version,
-        );
-        self.docs.insert(
-            params.text_document.uri.clone(),
             params.text_document.text.clone(),
+            true,
         );
         self.schedule_on_change(
             params.text_document.uri,
@@ -30,19 +28,11 @@ impl Backend {
 
     pub async fn handle_did_change(&self, params: DidChangeTextDocumentParams) {
         let uri = params.text_document.uri;
-        let current = self
-            .docs
-            .get(&uri)
-            .map(|doc| doc.value().clone())
-            .unwrap_or_default();
+        let current = self.get_document_text(&uri).unwrap_or_default();
         let Some(new_text) = apply_content_changes(current, &params.content_changes) else {
             return;
         };
-        self.doc_versions
-            .insert(uri.clone(), params.text_document.version);
-        self.docs.insert(uri.clone(), new_text.clone());
-        // Force semantic tokens to parse from latest unsaved text immediately.
-        self.trees.remove(&uri);
+        self.set_document_text_version(&uri, params.text_document.version, new_text.clone(), true);
 
         self.schedule_on_change(
             uri,
@@ -62,12 +52,8 @@ impl Backend {
             .await;
 
         if let (Some(version), Some(text)) = (
-            self.doc_versions
-                .get(&params.text_document.uri)
-                .map(|v| *v.value()),
-            self.docs
-                .get(&params.text_document.uri)
-                .map(|t| t.value().clone()),
+            self.get_document_version(&params.text_document.uri),
+            self.get_document_text(&params.text_document.uri),
         ) {
             self.schedule_on_change(params.text_document.uri, version, text, true, 0)
                 .await;
@@ -76,18 +62,10 @@ impl Backend {
     }
 
     pub async fn handle_did_close(&self, params: DidCloseTextDocumentParams) {
-        if let Some(handle) = self
-            .diag_tasks
-            .lock()
-            .await
-            .remove(&params.text_document.uri)
-        {
-            handle.abort();
+        if let Some(task) = self.take_document_diag_task(&params.text_document.uri) {
+            task.handle.abort();
         }
-        self.docs.remove(&params.text_document.uri);
-        self.trees.remove(&params.text_document.uri);
-        self.doc_versions.remove(&params.text_document.uri);
-        self.abl_parsers.remove(&params.text_document.uri);
+        self.documents.remove(&params.text_document.uri);
         debug!("file closed!");
     }
 
@@ -99,11 +77,6 @@ impl Backend {
         include_semantic_diags: bool,
         debounce_ms: u64,
     ) {
-        let mut tasks = self.diag_tasks.lock().await;
-        if let Some(prev) = tasks.remove(&uri) {
-            prev.abort();
-        }
-
         let backend = self.clone();
         let task_uri = uri.clone();
         let handle = tokio::spawn(async move {
@@ -112,7 +85,7 @@ impl Backend {
             }
             on_change(&backend, task_uri, version, text, include_semantic_diags).await;
         });
-        tasks.insert(uri, handle);
+        self.try_set_document_diag_task(&uri, include_semantic_diags, handle);
     }
 }
 

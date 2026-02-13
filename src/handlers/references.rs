@@ -12,7 +12,7 @@ impl Backend {
         let uri = params.text_document_position.text_document.uri;
         let pos = params.text_document_position.position;
 
-        let text = match self.docs.get(&uri) {
+        let text = match self.get_document_text(&uri) {
             Some(t) => t,
             None => return Ok(None),
         };
