@@ -51,10 +51,6 @@ impl Backend {
             Some(t) => t,
             None => return Ok(None),
         };
-        let tree = match self.trees.get(&uri) {
-            Some(t) => t,
-            None => return Ok(None),
-        };
 
         let offset = match lsp_pos_to_utf8_byte_offset(&text, pos) {
             Some(o) => o,
@@ -63,6 +59,11 @@ impl Backend {
         if let Some(location) = self.resolve_include_location(&uri, &text, offset).await {
             return Ok(Some(GotoDefinitionResponse::Scalar(location)));
         }
+
+        let tree = match self.trees.get(&uri) {
+            Some(t) => t,
+            None => return Ok(None),
+        };
 
         let symbol = match ascii_ident_or_dash_at_or_before(&text, offset)
             .or_else(|| ascii_ident_at_or_before(&text, offset))

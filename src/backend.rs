@@ -477,7 +477,7 @@ fn resolve_include_path(
     include: &str,
 ) -> Option<std::path::PathBuf> {
     let candidate = std::path::PathBuf::from(include);
-    if candidate.is_absolute() && candidate.exists() {
+    if candidate.is_absolute() {
         return Some(candidate);
     }
 

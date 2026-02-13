@@ -3,6 +3,7 @@ use tower_lsp::lsp_types::*;
 use tree_sitter::Node;
 
 use crate::analysis::buffers::collect_buffer_mappings;
+use crate::analysis::local_tables::collect_local_table_definitions;
 use crate::backend::Backend;
 use crate::utils::ts::collect_nodes_by_kind;
 
@@ -76,7 +77,13 @@ impl Backend {
             .into_iter()
             .map(|m| m.alias.to_ascii_uppercase())
             .collect::<std::collections::HashSet<_>>();
-        if self.db_tables.is_empty() && buffer_aliases.is_empty() {
+        let mut local_table_defs = Vec::new();
+        collect_local_table_definitions(tree.root_node(), text.as_bytes(), &mut local_table_defs);
+        let local_table_names = local_table_defs
+            .into_iter()
+            .map(|d| d.name_upper)
+            .collect::<std::collections::HashSet<_>>();
+        if self.db_tables.is_empty() && buffer_aliases.is_empty() && local_table_names.is_empty() {
             return vec![];
         }
 
@@ -89,7 +96,10 @@ impl Backend {
                 continue;
             };
             let name_upper = name.to_ascii_uppercase();
-            if self.db_tables.contains(&name_upper) || buffer_aliases.contains(&name_upper) {
+            if self.db_tables.contains(&name_upper)
+                || buffer_aliases.contains(&name_upper)
+                || local_table_names.contains(&name_upper)
+            {
                 let Some(start_col) =
                     point_column_byte_to_utf16(text.as_str(), &line_starts, start_line, sp.column)
                 else {

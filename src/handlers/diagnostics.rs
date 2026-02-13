@@ -8,6 +8,7 @@ use crate::analysis::buffers::collect_buffer_mappings;
 use crate::analysis::definitions::collect_definition_symbols;
 use crate::analysis::functions::normalize_function_name;
 use crate::analysis::includes::collect_include_sites;
+use crate::analysis::local_tables::collect_local_table_definitions;
 use crate::backend::Backend;
 use crate::utils::ts::{
     collect_nodes_by_kind, count_nodes_by_kind, direct_child_by_kind, node_to_range,
@@ -364,6 +365,7 @@ async fn collect_unknown_symbol_diags(
         &mut known_variables,
         &mut known_functions,
     );
+    collect_local_table_field_symbols(backend, root, text.as_bytes(), &mut known_variables);
 
     if include_semantic_diags && let Ok(current_path) = uri.to_file_path() {
         let include_sites = collect_include_sites(text);
@@ -451,6 +453,34 @@ async fn collect_unknown_symbol_diags(
     }
 
     true
+}
+
+fn collect_local_table_field_symbols(
+    backend: &Backend,
+    root: Node<'_>,
+    src: &[u8],
+    known_variables: &mut HashSet<String>,
+) {
+    let mut defs = Vec::new();
+    collect_local_table_definitions(root, src, &mut defs);
+    for def in defs {
+        for field in def.fields {
+            let upper = field.name.trim().to_ascii_uppercase();
+            if !upper.is_empty() {
+                known_variables.insert(upper);
+            }
+        }
+        if let Some(like_table_upper) = def.like_table_upper
+            && let Some(fields) = backend.db_fields_by_table.get(&like_table_upper)
+        {
+            for field in fields.value().iter() {
+                let upper = field.name.trim().to_ascii_uppercase();
+                if !upper.is_empty() {
+                    known_variables.insert(upper);
+                }
+            }
+        }
+    }
 }
 
 fn collect_active_buffer_like_names(
