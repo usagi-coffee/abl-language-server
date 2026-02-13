@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
@@ -23,6 +24,8 @@ struct CompletionCandidate {
     kind: CompletionItemKind,
     detail: String,
 }
+
+const COMPLETION_INCLUDE_BUDGET_MS: u64 = 120;
 
 impl Backend {
     pub async fn handle_completion(
@@ -48,10 +51,13 @@ impl Backend {
         };
         // Completion should remain responsive while typing; prefer cached tree
         // rather than blocking on reparse for every document version.
-        let tree = match self.get_document_tree_prefer_cached(&uri) {
+        let (tree, tree_is_stale) = match self.get_document_tree_prefer_cached_with_freshness(&uri)
+        {
             Some(t) => t,
             None => return Ok(Some(CompletionResponse::Array(vec![]))),
         };
+        let mut is_incomplete = tree_is_stale;
+        let include_deadline = Instant::now() + Duration::from_millis(COMPLETION_INCLUDE_BUDGET_MS);
 
         let offset = match lsp_pos_to_utf8_byte_offset(&text, pos) {
             Some(o) => o,
@@ -116,7 +122,7 @@ impl Backend {
             if let Some(table_key) = table_upper {
                 if let Some(fields) = local_fields_by_table.get(&table_key) {
                     let items = build_field_completion_items(fields, &table_key, &field_prefix);
-                    return Ok(Some(CompletionResponse::Array(items)));
+                    return Ok(Some(completion_response(items, is_incomplete)));
                 }
 
                 if let Some(like_key) = local_like_by_table.get(&table_key)
@@ -124,18 +130,18 @@ impl Backend {
                         lookup_case_insensitive_fields(&self.db_fields_by_table, like_key)
                 {
                     let items = build_field_completion_items(&fields, &table_key, &field_prefix);
-                    return Ok(Some(CompletionResponse::Array(items)));
+                    return Ok(Some(completion_response(items, is_incomplete)));
                 }
 
                 let fields = lookup_case_insensitive_fields(&self.db_fields_by_table, &table_key);
                 if let Some(fields) = fields {
                     let items = build_field_completion_items(&fields, &table_key, &field_prefix);
-                    return Ok(Some(CompletionResponse::Array(items)));
+                    return Ok(Some(completion_response(items, is_incomplete)));
                 }
             }
         }
         if trigger_is_dot {
-            return Ok(Some(CompletionResponse::Array(vec![])));
+            return Ok(Some(completion_response(vec![], is_incomplete)));
         }
 
         let mut candidates = Vec::<CompletionCandidate>::new();
@@ -160,10 +166,11 @@ impl Backend {
                     detail: s.detail,
                 }),
         );
-        candidates.extend(
-            self.collect_symbols_from_includes_for_completion(&uri, &text, offset)
-                .await,
-        );
+        let (include_candidates, include_timed_out) = self
+            .collect_symbols_from_includes_for_completion(&uri, &text, offset, include_deadline)
+            .await;
+        is_incomplete |= include_timed_out;
+        candidates.extend(include_candidates);
 
         let table_labels = &self.db_table_labels;
         candidates.extend(
@@ -200,7 +207,7 @@ impl Backend {
             })
             .collect::<Vec<_>>();
 
-        Ok(Some(CompletionResponse::Array(items)))
+        Ok(Some(completion_response(items, is_incomplete)))
     }
 
     async fn collect_symbols_from_includes_for_completion(
@@ -208,20 +215,26 @@ impl Backend {
         uri: &Url,
         text: &str,
         offset: usize,
-    ) -> Vec<CompletionCandidate> {
+        deadline: Instant,
+    ) -> (Vec<CompletionCandidate>, bool) {
         if !text.as_bytes().contains(&b'{') {
-            return Vec::new();
+            return (Vec::new(), false);
         }
 
         let Some(current_path) = uri.to_file_path().ok() else {
-            return Vec::new();
+            return (Vec::new(), false);
         };
 
         let include_sites = collect_include_sites(text);
         let mut parsed_files = HashSet::new();
         let mut out = Vec::new();
+        let mut timed_out = false;
 
         for include in include_sites {
+            if Instant::now() >= deadline {
+                timed_out = true;
+                break;
+            }
             if include.start_offset > offset {
                 continue;
             }
@@ -242,7 +255,7 @@ impl Backend {
             );
         }
 
-        out
+        (out, timed_out)
     }
 
     async fn get_cached_include_completion_candidates(
@@ -292,6 +305,17 @@ impl Backend {
                 detail: s.detail,
             })
             .collect()
+    }
+}
+
+fn completion_response(items: Vec<CompletionItem>, is_incomplete: bool) -> CompletionResponse {
+    if is_incomplete {
+        CompletionResponse::List(CompletionList {
+            is_incomplete: true,
+            items,
+        })
+    } else {
+        CompletionResponse::Array(items)
     }
 }
 

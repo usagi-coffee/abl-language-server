@@ -338,10 +338,14 @@ impl Backend {
         Some(parsed)
     }
 
-    pub fn get_document_tree_prefer_cached(&self, uri: &Url) -> Option<Tree> {
+    pub fn get_document_tree_prefer_cached_with_freshness(
+        &self,
+        uri: &Url,
+    ) -> Option<(Tree, bool)> {
         let mut doc = self.documents.get_mut(uri)?;
         if let Some(tree) = &doc.tree {
-            return Some(tree.clone());
+            let is_stale = doc.tree_version != doc.version;
+            return Some((tree.clone(), is_stale));
         }
         let text = doc.text.clone();
         let parsed = {
@@ -350,7 +354,7 @@ impl Backend {
         };
         doc.tree = Some(parsed.clone());
         doc.tree_version = doc.version;
-        Some(parsed)
+        Some((parsed, false))
     }
 
     pub fn set_document_tree_if_version(&self, uri: &Url, version: i32, tree: Tree) {
