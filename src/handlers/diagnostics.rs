@@ -1033,6 +1033,7 @@ fn is_builtin_variable_name(name_upper: &str) -> bool {
         "THIS-PROCEDURE",
         "SOURCE-PROCEDURE",
         "TARGET-PROCEDURE",
+        "ENDKEY",
         "CURRENT-WINDOW",
         "DEFAULT-WINDOW",
         "ACTIVE-WINDOW",
