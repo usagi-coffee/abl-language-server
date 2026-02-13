@@ -1,8 +1,3 @@
-on "RETURN" of browse_lp_mstr
-DO:
-
-END.
-
 // We should be able to go to files for relative paths
 {includes/include.i}
 
@@ -24,6 +19,9 @@ FIND z9zw_mstr.
 DEFINE VARIABLE lv_before AS CHARACTER NO-UNDO.
 DEFINE VARIABLE lv_counter AS INTEGER NO-UNDO.
 DEFINE VARIABLE lv_name AS CHAR NO-UNDO.
+
+
+UPPER('x').
 
 // Unknown symbol diagnostics should be case-insensitive.
 lv_counter = missing_var.
