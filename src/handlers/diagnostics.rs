@@ -10,6 +10,7 @@ use crate::analysis::functions::normalize_function_name;
 use crate::analysis::includes::collect_include_sites;
 use crate::analysis::local_tables::collect_local_table_definitions;
 use crate::backend::Backend;
+use crate::config::DiagnosticFeatureConfig;
 use crate::utils::ts::{
     collect_nodes_by_kind, count_nodes_by_kind, direct_child_by_kind, node_to_range,
 };
@@ -34,6 +35,25 @@ pub async fn on_change(
     }
 
     let diagnostics_enabled = backend.config.lock().await.diagnostics.enabled;
+    let diagnostics_cfg = backend.config.lock().await.diagnostics.clone();
+    let unknown_variables_enabled =
+        diagnostics_feature_enabled_for_uri(backend, &uri, &diagnostics_cfg.unknown_variables)
+            .await;
+    let unknown_functions_enabled =
+        diagnostics_feature_enabled_for_uri(backend, &uri, &diagnostics_cfg.unknown_functions)
+            .await;
+    let unknown_variables_ignored: HashSet<String> = diagnostics_cfg
+        .unknown_variables
+        .ignore
+        .iter()
+        .map(|name| name.to_ascii_uppercase())
+        .collect();
+    let unknown_functions_ignored: HashSet<String> = diagnostics_cfg
+        .unknown_functions
+        .ignore
+        .iter()
+        .map(|name| name.to_ascii_uppercase())
+        .collect();
     let parsed_tree = {
         let Some(doc) = backend.documents.get_mut(&uri) else {
             return;
@@ -97,6 +117,10 @@ pub async fn on_change(
         &text,
         tree.root_node(),
         include_semantic_diags,
+        unknown_variables_enabled,
+        unknown_functions_enabled,
+        &unknown_variables_ignored,
+        &unknown_functions_ignored,
         &mut diags,
     )
     .await
@@ -335,6 +359,10 @@ async fn collect_unknown_symbol_diags(
     text: &str,
     root: Node<'_>,
     include_semantic_diags: bool,
+    unknown_variables_enabled: bool,
+    unknown_functions_enabled: bool,
+    unknown_variables_ignored: &HashSet<String>,
+    unknown_functions_ignored: &HashSet<String>,
     out: &mut Vec<Diagnostic>,
 ) -> bool {
     // Lightweight on-change pass intentionally skips include parsing.
@@ -405,45 +433,135 @@ async fn collect_unknown_symbol_diags(
     let active_table_fields =
         collect_active_db_table_field_symbols(backend, &active_buffer_like_names);
 
-    for r in refs {
-        if known_variables.contains(&r.name_upper)
-            || backend.db_tables.contains(&r.name_upper)
-            || active_table_fields.contains(&r.name_upper)
-            || is_builtin_variable_name(&r.name_upper)
-            || is_builtin_function_name(&r.name_upper)
-            || looks_like_table_field_reference(&r.name_upper, &active_buffer_like_names)
-        {
-            continue;
+    if unknown_variables_enabled {
+        for r in refs {
+            if known_variables.contains(&r.name_upper)
+                || unknown_variables_ignored.contains(&r.name_upper)
+                || backend.db_tables.contains(&r.name_upper)
+                || active_table_fields.contains(&r.name_upper)
+                || is_builtin_variable_name(&r.name_upper)
+                || is_builtin_function_name(&r.name_upper)
+                || looks_like_table_field_reference(&r.name_upper, &active_buffer_like_names)
+            {
+                continue;
+            }
+            out.push(Diagnostic {
+                range: r.range,
+                severity: Some(DiagnosticSeverity::ERROR),
+                source: Some("abl-semantic".into()),
+                message: format!("Unknown variable '{}'", r.display_name),
+                ..Default::default()
+            });
         }
-        out.push(Diagnostic {
-            range: r.range,
-            severity: Some(DiagnosticSeverity::ERROR),
-            source: Some("abl-semantic".into()),
-            message: format!("Unknown variable '{}'", r.display_name),
-            ..Default::default()
-        });
     }
 
     let mut calls = Vec::<FunctionCallSite>::new();
     collect_function_calls(root, text.as_bytes(), &mut calls);
-    for call in calls {
-        if known_functions.contains(&call.name_upper)
-            || is_builtin_function_name(&call.name_upper)
-            || call.display_name.contains('.')
-            || call.display_name.contains(':')
-        {
-            continue;
+    if unknown_functions_enabled {
+        for call in calls {
+            if known_functions.contains(&call.name_upper)
+                || unknown_functions_ignored.contains(&call.name_upper)
+                || is_builtin_function_name(&call.name_upper)
+                || call.display_name.contains('.')
+                || call.display_name.contains(':')
+            {
+                continue;
+            }
+            out.push(Diagnostic {
+                range: call.range,
+                severity: Some(DiagnosticSeverity::ERROR),
+                source: Some("abl-semantic".into()),
+                message: format!("Unknown function '{}'", call.display_name),
+                ..Default::default()
+            });
         }
-        out.push(Diagnostic {
-            range: call.range,
-            severity: Some(DiagnosticSeverity::ERROR),
-            source: Some("abl-semantic".into()),
-            message: format!("Unknown function '{}'", call.display_name),
-            ..Default::default()
-        });
     }
 
     true
+}
+
+async fn diagnostics_feature_enabled_for_uri(
+    backend: &Backend,
+    uri: &Url,
+    feature: &DiagnosticFeatureConfig,
+) -> bool {
+    if !feature.enabled {
+        return false;
+    }
+    if feature.exclude.is_empty() {
+        return true;
+    }
+    !uri_matches_any_exclude_pattern(backend, uri, &feature.exclude).await
+}
+
+async fn uri_matches_any_exclude_pattern(
+    backend: &Backend,
+    uri: &Url,
+    patterns: &[String],
+) -> bool {
+    let Ok(path) = uri.to_file_path() else {
+        return false;
+    };
+    let abs = normalize_path_for_match(path.to_string_lossy().as_ref());
+    let base = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let base_norm = normalize_path_for_match(&base);
+    let rel = {
+        let root = backend.workspace_root.lock().await.clone();
+        root.and_then(|r| path.strip_prefix(r).ok().map(|p| p.to_path_buf()))
+            .map(|p| normalize_path_for_match(p.to_string_lossy().as_ref()))
+            .unwrap_or_else(String::new)
+    };
+
+    patterns.iter().any(|p| {
+        let pat = normalize_path_for_match(p);
+        wildcard_match(&pat, &abs)
+            || (!rel.is_empty() && wildcard_match(&pat, &rel))
+            || wildcard_match(&pat, &base_norm)
+    })
+}
+
+fn normalize_path_for_match(raw: &str) -> String {
+    raw.replace('\\', "/").to_ascii_lowercase()
+}
+
+fn wildcard_match(pattern: &str, text: &str) -> bool {
+    if pattern.is_empty() {
+        return text.is_empty();
+    }
+    if !pattern.contains('*') {
+        return text == pattern || text.starts_with(&(pattern.to_string() + "/"));
+    }
+
+    let mut p = 0usize;
+    let mut t = 0usize;
+    let pb = pattern.as_bytes();
+    let tb = text.as_bytes();
+    let mut star_idx: Option<usize> = None;
+    let mut match_idx = 0usize;
+
+    while t < tb.len() {
+        if p < pb.len() && (pb[p] == tb[t]) {
+            p += 1;
+            t += 1;
+        } else if p < pb.len() && pb[p] == b'*' {
+            star_idx = Some(p);
+            p += 1;
+            match_idx = t;
+        } else if let Some(si) = star_idx {
+            p = si + 1;
+            match_idx += 1;
+            t = match_idx;
+        } else {
+            return false;
+        }
+    }
+    while p < pb.len() && pb[p] == b'*' {
+        p += 1;
+    }
+    p == pb.len()
 }
 
 fn collect_local_table_field_symbols(

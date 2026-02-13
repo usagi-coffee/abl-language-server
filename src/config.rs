@@ -31,11 +31,37 @@ impl Default for CompletionConfig {
 #[serde(default)]
 pub struct DiagnosticsConfig {
     pub enabled: bool,
+    pub unknown_variables: DiagnosticFeatureConfig,
+    pub unknown_functions: DiagnosticFeatureConfig,
 }
 
 impl Default for DiagnosticsConfig {
     fn default() -> Self {
-        Self { enabled: true }
+        Self {
+            enabled: true,
+            unknown_variables: DiagnosticFeatureConfig::default(),
+            unknown_functions: DiagnosticFeatureConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct DiagnosticFeatureConfig {
+    pub enabled: bool,
+    #[serde(default, deserialize_with = "deserialize_string_or_vec")]
+    pub exclude: Vec<String>,
+    #[serde(default, deserialize_with = "deserialize_string_or_vec")]
+    pub ignore: Vec<String>,
+}
+
+impl Default for DiagnosticFeatureConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            exclude: Vec::new(),
+            ignore: Vec::new(),
+        }
     }
 }
 
@@ -169,5 +195,37 @@ propath = ["/global/a", "relative/includes"]
 
         assert_eq!(cfg.dumpfile, vec!["a.df", "b.df"]);
         assert_eq!(cfg.propath, vec!["/global/a", "relative/includes"]);
+    }
+
+    #[test]
+    fn parses_diagnostic_feature_excludes() {
+        let cfg: AblConfig = toml::from_str(
+            r#"
+[diagnostics.unknown_variables]
+exclude = ["legacy/*.p", "tmp/**/*.p"]
+ignore = ["BatchRun", "Today"]
+
+[diagnostics.unknown_functions]
+enabled = false
+exclude = "special.p"
+ignore = "custom_func"
+"#,
+        )
+        .expect("parse config");
+
+        assert_eq!(
+            cfg.diagnostics.unknown_variables.exclude,
+            vec!["legacy/*.p", "tmp/**/*.p"]
+        );
+        assert_eq!(
+            cfg.diagnostics.unknown_variables.ignore,
+            vec!["BatchRun", "Today"]
+        );
+        assert!(!cfg.diagnostics.unknown_functions.enabled);
+        assert_eq!(cfg.diagnostics.unknown_functions.exclude, vec!["special.p"]);
+        assert_eq!(
+            cfg.diagnostics.unknown_functions.ignore,
+            vec!["custom_func"]
+        );
     }
 }

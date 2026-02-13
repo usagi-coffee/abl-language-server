@@ -51,6 +51,16 @@ enabled = true
 [diagnostics]
 enabled = true
 
+[diagnostics.unknown_variables]
+enabled = true
+exclude = ["legacy/*.p", "generated/procedures"]
+ignore = ["batchrun", "today", "now"]
+
+[diagnostics.unknown_functions]
+enabled = true
+exclude = "generated/sql/*"
+ignore = ["abs", "round", "my_dynamic_fn"]
+
 [semantic_tokens]
 enabled = true
 ```
@@ -60,7 +70,13 @@ enabled = true
 | Key                       | Type                 | Default | Description                                                                           |
 | ------------------------- | -------------------- | ------- | ------------------------------------------------------------------------------------- |
 | `completion.enabled`      | `bool`               | `true`  | Enables completion responses                                                          |
-| `diagnostics.enabled`     | `bool`               | `true`  | Enables/disables all diagnostic publishing (syntax + semantic arity)                  |
+| `diagnostics.enabled`     | `bool`               | `true`  | Enables/disables all diagnostic publishing (syntax + semantic arity)                 |
+| `diagnostics.unknown_variables.enabled`  | `bool`               | `true`  | Enables/disables unknown-variable diagnostics                                           |
+| `diagnostics.unknown_variables.exclude`  | `string \| string[]` | `[]`    | File/path patterns where unknown-variable diagnostics are skipped                      |
+| `diagnostics.unknown_variables.ignore`   | `string \| string[]` | `[]`    | Symbol names ignored by unknown-variable diagnostics (case-insensitive)               |
+| `diagnostics.unknown_functions.enabled`  | `bool`               | `true`  | Enables/disables unknown-function diagnostics                                           |
+| `diagnostics.unknown_functions.exclude`  | `string \| string[]` | `[]`    | File/path patterns where unknown-function diagnostics are skipped                      |
+| `diagnostics.unknown_functions.ignore`   | `string \| string[]` | `[]`    | Function names ignored by unknown-function diagnostics (case-insensitive)             |
 | `semantic_tokens.enabled` | `bool`               | `true`  | Enables semantic token responses (DB table identifier highlighting)                   |
 | `dumpfile`                | `string \| string[]` | `[]`    | Path(s) to `.df` dump files; relative paths resolve from workspace root               |
 | `propath`                 | `string \| string[]` | `[]`    | Include search roots for `{...}` includes; relative paths resolve from workspace root |
