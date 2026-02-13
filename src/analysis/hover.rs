@@ -2,7 +2,9 @@ use dashmap::DashMap;
 use tower_lsp::lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind};
 use tree_sitter::Node;
 
+use crate::analysis::buffers::collect_buffer_mappings;
 use crate::analysis::functions::FunctionSignature;
+use crate::analysis::local_tables::collect_local_table_definitions;
 use crate::backend::DbFieldInfo;
 use crate::utils::ts::{direct_child_by_kind, node_trimmed_text};
 
@@ -62,4 +64,98 @@ pub fn find_db_field_matches(
         }
     }
     out
+}
+
+pub fn find_local_table_field_hover(root: Node<'_>, text: &str, offset: usize) -> Option<Hover> {
+    let (qualifier_upper, field_upper, field_display) =
+        extract_qualified_field_at_offset(text, offset)?;
+    let src = text.as_bytes();
+
+    let mut local_defs = Vec::new();
+    collect_local_table_definitions(root, src, &mut local_defs);
+
+    let mut table_upper = Some(qualifier_upper.clone());
+    if !local_defs.iter().any(|d| d.name_upper == qualifier_upper) {
+        let mut mappings = Vec::new();
+        collect_buffer_mappings(root, src, &mut mappings);
+        table_upper = mappings
+            .into_iter()
+            .find(|m| m.alias.eq_ignore_ascii_case(&qualifier_upper))
+            .map(|m| m.table.trim().to_ascii_uppercase());
+    }
+
+    let table_upper = table_upper?;
+    let def = local_defs
+        .into_iter()
+        .find(|d| d.name_upper == table_upper)?;
+    let field = def
+        .fields
+        .into_iter()
+        .find(|f| f.name.eq_ignore_ascii_case(&field_upper))?;
+
+    let mut lines = vec![format!("**Local Field** `{}`", field_display)];
+    lines.push(format!("Table: `{}`", table_upper));
+    if let Some(ty) = &field.field_type {
+        lines.push(format!("Type: `{}`", ty));
+    }
+
+    Some(markdown_hover(lines.join("\n\n")))
+}
+
+fn extract_qualified_field_at_offset(
+    text: &str,
+    offset: usize,
+) -> Option<(String, String, String)> {
+    let bytes = text.as_bytes();
+    if bytes.is_empty() {
+        return None;
+    }
+
+    let mut i = offset.min(bytes.len().saturating_sub(1));
+    if !is_ident_char(bytes[i]) {
+        if i == 0 || !is_ident_char(bytes[i - 1]) {
+            return None;
+        }
+        i -= 1;
+    }
+
+    let mut field_start = i;
+    while field_start > 0 && is_ident_char(bytes[field_start - 1]) {
+        field_start -= 1;
+    }
+    let mut field_end = i + 1;
+    while field_end < bytes.len() && is_ident_char(bytes[field_end]) {
+        field_end += 1;
+    }
+    if field_start == field_end {
+        return None;
+    }
+    if field_start == 0 || bytes[field_start - 1] != b'.' {
+        return None;
+    }
+
+    let field_display = text[field_start..field_end].to_string();
+    let field_upper = field_display.to_ascii_uppercase();
+
+    let q_end = field_start - 1;
+    if q_end == 0 {
+        return None;
+    }
+    let mut q_start = q_end;
+    while q_start > 0 && is_ident_char(bytes[q_start - 1]) {
+        q_start -= 1;
+    }
+    if q_start == q_end {
+        return None;
+    }
+    let qualifier_upper = text[q_start..q_end].to_ascii_uppercase();
+    if qualifier_upper.is_empty() {
+        return None;
+    }
+
+    Some((qualifier_upper, field_upper, field_display))
+}
+
+fn is_ident_char(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-')
 }

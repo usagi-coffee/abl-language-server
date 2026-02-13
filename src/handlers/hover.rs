@@ -5,7 +5,8 @@ use crate::analysis::buffers::collect_buffer_mappings;
 use crate::analysis::definitions::collect_definition_symbols;
 use crate::analysis::functions::{find_function_signature, find_function_signature_from_includes};
 use crate::analysis::hover::{
-    find_db_field_matches, function_signature_hover, markdown_hover, symbol_at_offset,
+    find_db_field_matches, find_local_table_field_hover, function_signature_hover, markdown_hover,
+    symbol_at_offset,
 };
 use crate::analysis::schema::normalize_lookup_key;
 use crate::analysis::schema_lookup::has_schema_key;
@@ -83,6 +84,12 @@ impl Backend {
 
         if has_schema_key(&self.db_table_definitions, &symbol_upper) {
             return Ok(Some(markdown_hover(format!("**DB Table** `{}`", symbol))));
+        }
+
+        if let Some(local_field_hover) =
+            find_local_table_field_hover(tree.root_node(), &text, offset)
+        {
+            return Ok(Some(local_field_hover));
         }
 
         let field_matches = find_db_field_matches(&self.db_fields_by_table, &symbol_upper);

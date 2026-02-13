@@ -77,7 +77,7 @@ pub fn path_matches_any_pattern(
     let rel = workspace_root
         .and_then(|r| path.strip_prefix(r).ok().map(|p| p.to_path_buf()))
         .map(|p| normalize_path_for_match(p.to_string_lossy().as_ref()))
-        .unwrap_or_else(String::new);
+        .unwrap_or_default();
 
     patterns.iter().any(|p| {
         let pat = normalize_path_for_match(p);

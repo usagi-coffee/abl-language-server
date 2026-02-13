@@ -43,6 +43,8 @@ pub struct IncludeParseCacheEntry {
 
 pub struct DiagTask {
     pub handle: tokio::task::JoinHandle<()>,
+    pub version: i32,
+    pub include_semantic_diags: bool,
 }
 
 pub struct DocumentState {
@@ -374,20 +376,40 @@ impl Backend {
     pub fn try_set_document_diag_task(
         &self,
         uri: &Url,
-        _include_semantic_diags: bool,
+        include_semantic_diags: bool,
+        version: i32,
         handle: tokio::task::JoinHandle<()>,
     ) {
         match self.documents.entry(uri.clone()) {
             Entry::Occupied(mut entry) => {
                 let doc = entry.get_mut();
                 if let Some(prev) = doc.diag_task.take() {
+                    // Keep a pending full semantic pass when a lightweight on-change pass
+                    // races in during startup. This avoids missing initial diagnostics
+                    // until the user edits or reopens the file.
+                    if prev.include_semantic_diags
+                        && !include_semantic_diags
+                        && prev.version <= version
+                    {
+                        handle.abort();
+                        doc.diag_task = Some(prev);
+                        return;
+                    }
                     prev.handle.abort();
                 }
-                doc.diag_task = Some(DiagTask { handle });
+                doc.diag_task = Some(DiagTask {
+                    handle,
+                    version,
+                    include_semantic_diags,
+                });
             }
             Entry::Vacant(entry) => {
                 let mut doc = self.new_document_state(String::new(), -1);
-                doc.diag_task = Some(DiagTask { handle });
+                doc.diag_task = Some(DiagTask {
+                    handle,
+                    version,
+                    include_semantic_diags,
+                });
                 entry.insert(doc);
             }
         }

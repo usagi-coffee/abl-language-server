@@ -86,6 +86,6 @@ impl Backend {
             }
             on_change(&backend, task_uri, version, text, include_semantic_diags).await;
         });
-        self.try_set_document_diag_task(&uri, include_semantic_diags, handle);
+        self.try_set_document_diag_task(&uri, include_semantic_diags, version, handle);
     }
 }

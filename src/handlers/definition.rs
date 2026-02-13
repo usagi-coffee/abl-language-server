@@ -50,6 +50,7 @@ impl Backend {
 
         if let Some(location) = resolve_buffer_alias_table_location(
             self,
+            &uri,
             tree.root_node(),
             text.as_bytes(),
             &symbol_upper,

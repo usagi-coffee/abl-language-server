@@ -37,6 +37,7 @@ pub async fn resolve_include_directive_location(
 
 pub fn resolve_buffer_alias_table_location(
     backend: &Backend,
+    uri: &Url,
     root: Node<'_>,
     src: &[u8],
     symbol_upper: &str,
@@ -70,11 +71,46 @@ pub fn resolve_buffer_alias_table_location(
         }
     }
 
-    if let Some((_, table_key)) = buffer_before.or(buffer_after)
-        && let Some(locations) = backend.db_table_definitions.get(&table_key)
-        && let Some(location) = pick_single_location(locations.value())
-    {
-        return Some(location);
+    if let Some((_, table_key)) = buffer_before.or(buffer_after) {
+        let mut local_sites = Vec::new();
+        collect_definition_sites(root, src, &mut local_sites);
+
+        let mut best_before: Option<(usize, Range)> = None;
+        let mut best_after: Option<(usize, Range)> = None;
+        for site in local_sites {
+            if !site.label.eq_ignore_ascii_case(&table_key) {
+                continue;
+            }
+            if site.start_byte <= offset {
+                let should_take = best_before
+                    .as_ref()
+                    .map(|(start, _)| site.start_byte > *start)
+                    .unwrap_or(true);
+                if should_take {
+                    best_before = Some((site.start_byte, site.range));
+                }
+            } else {
+                let should_take = best_after
+                    .as_ref()
+                    .map(|(start, _)| site.start_byte < *start)
+                    .unwrap_or(true);
+                if should_take {
+                    best_after = Some((site.start_byte, site.range));
+                }
+            }
+        }
+        if let Some((_, range)) = best_before.or(best_after) {
+            return Some(Location {
+                uri: uri.clone(),
+                range,
+            });
+        }
+
+        if let Some(locations) = backend.db_table_definitions.get(&table_key)
+            && let Some(location) = pick_single_location(locations.value())
+        {
+            return Some(location);
+        }
     }
 
     None
