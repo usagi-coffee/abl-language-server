@@ -9,6 +9,14 @@ const DID_CHANGE_DIAG_DEBOUNCE_MS: u64 = 200;
 
 impl Backend {
     pub async fn handle_did_open(&self, params: DidOpenTextDocumentParams) {
+        self.doc_versions.insert(
+            params.text_document.uri.clone(),
+            params.text_document.version,
+        );
+        self.docs.insert(
+            params.text_document.uri.clone(),
+            params.text_document.text.clone(),
+        );
         self.schedule_on_change(
             params.text_document.uri,
             params.text_document.version,
@@ -30,6 +38,11 @@ impl Backend {
         let Some(new_text) = apply_content_changes(current, &params.content_changes) else {
             return;
         };
+        self.doc_versions
+            .insert(uri.clone(), params.text_document.version);
+        self.docs.insert(uri.clone(), new_text.clone());
+        // Force semantic tokens to parse from latest unsaved text immediately.
+        self.trees.remove(&uri);
 
         self.schedule_on_change(
             uri,

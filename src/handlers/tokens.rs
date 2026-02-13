@@ -46,11 +46,25 @@ impl Backend {
         uri: &Url,
         range: Option<Range>,
     ) -> Vec<SemanticToken> {
-        let Some(text) = self.docs.get(uri) else {
+        let Some(text_entry) = self.docs.get(uri) else {
             return vec![];
         };
-        let Some(tree) = self.trees.get(uri) else {
-            return vec![];
+        let text = text_entry.value().clone();
+        drop(text_entry);
+
+        let tree = if let Some(tree) = self.trees.get(uri) {
+            tree.value().clone()
+        } else {
+            let parser_mutex = self
+                .abl_parsers
+                .entry(uri.clone())
+                .or_insert_with(|| std::sync::Mutex::new(self.new_abl_parser()));
+            let mut parser = parser_mutex.lock().expect("ABL parser mutex poisoned");
+            let Some(parsed) = parser.parse(text.clone(), None) else {
+                return vec![];
+            };
+            self.trees.insert(uri.clone(), parsed.clone());
+            parsed
         };
 
         let mut nodes = Vec::<Node>::new();
@@ -91,7 +105,6 @@ impl Backend {
                 raw.push((start_line, start_col, len));
             }
         }
-
         raw.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
         raw.dedup();
 

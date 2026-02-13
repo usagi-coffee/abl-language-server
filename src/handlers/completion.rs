@@ -44,9 +44,19 @@ impl Backend {
             Some(t) => t.value().clone(),
             None => return Ok(Some(CompletionResponse::Array(vec![]))),
         };
-        let tree = match self.trees.get(&uri) {
-            Some(t) => t.value().clone(),
-            None => return Ok(Some(CompletionResponse::Array(vec![]))),
+        let tree = if let Some(t) = self.trees.get(&uri) {
+            t.value().clone()
+        } else {
+            let parser_mutex = self
+                .abl_parsers
+                .entry(uri.clone())
+                .or_insert_with(|| std::sync::Mutex::new(self.new_abl_parser()));
+            let mut parser = parser_mutex.lock().expect("ABL parser mutex poisoned");
+            let Some(parsed) = parser.parse(text.clone(), None) else {
+                return Ok(Some(CompletionResponse::Array(vec![])));
+            };
+            self.trees.insert(uri.clone(), parsed.clone());
+            parsed
         };
 
         let offset = match lsp_pos_to_utf8_byte_offset(&text, pos) {
