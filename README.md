@@ -37,6 +37,10 @@ The server searches for `abl.toml` in the opened workspace root.
 ### Supported options
 
 ```toml
+# Optional
+# Inherit one or more other config files (relative to this file or absolute path).
+inherits = ["shared/abl.base.toml"]
+
 # Optional (by defualt searches relative to the opened root directory)
 # Supports absolute paths and workspace-root-relative paths, order is preserved.
 propath = ["/global/a", "includes", "shared/includes"]
@@ -69,6 +73,7 @@ enabled = true
 
 | Key                       | Type                 | Default | Description                                                                           |
 | ------------------------- | -------------------- | ------- | ------------------------------------------------------------------------------------- |
+| `inherits`                | `string \| string[]` | `[]`    | Parent config file(s) to load first; child config overrides parent values            |
 | `completion.enabled`      | `bool`               | `true`  | Enables completion responses                                                          |
 | `diagnostics.enabled`     | `bool`               | `true`  | Enables/disables all diagnostic publishing (syntax + semantic arity)                 |
 | `diagnostics.unknown_variables.enabled`  | `bool`               | `true`  | Enables/disables unknown-variable diagnostics                                           |
@@ -80,6 +85,12 @@ enabled = true
 | `semantic_tokens.enabled` | `bool`               | `true`  | Enables semantic token responses (DB table identifier highlighting)                   |
 | `dumpfile`                | `string \| string[]` | `[]`    | Path(s) to `.df` dump files; relative paths resolve from workspace root               |
 | `propath`                 | `string \| string[]` | `[]`    | Include search roots for `{...}` includes; relative paths resolve from workspace root |
+
+### Inheritance behavior
+
+- `inherits` supports a single path or a list of paths.
+- Relative paths are resolved from the current `abl.toml` directory.
+- Parent config(s) are merged first, then the current file overrides them.
 
 ### Dumpfile behavior
 

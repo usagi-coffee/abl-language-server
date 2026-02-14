@@ -113,6 +113,7 @@ pub fn is_builtin_function_name(name_upper: &str) -> bool {
         "IF",
         "INDEX",
         "INPUT",
+        "INT",
         "INT64",
         "INTEGER",
         "INTERVAL",
@@ -223,6 +224,7 @@ pub fn is_builtin_function_name(name_upper: &str) -> bool {
         "VALID-EVENT",
         "VALID-HANDLE",
         "VALID-OBJECT",
+        "VALUE",
         "WEEKDAY",
         "WIDGET-HANDLE",
         "YEAR",
@@ -350,12 +352,7 @@ pub fn is_builtin_variable_name(name_upper: &str) -> bool {
         "SUPER",
         "THIS-OBJECT",
     ];
-    const GLOBAL_VARIABLE_EXCEPTIONS: &[&str] = &[
-        // Project-level globals intentionally allowed without local declaration.
-        "BATCHRUN",
-    ];
-
-    BUILTIN_VARIABLES.contains(&name_upper) || GLOBAL_VARIABLE_EXCEPTIONS.contains(&name_upper)
+    BUILTIN_VARIABLES.contains(&name_upper)
 }
 
 #[cfg(test)]
@@ -374,15 +371,19 @@ mod tests {
         assert!(is_builtin_function_name("TO_TIMESTAMP"));
         assert!(is_builtin_function_name("PRO_ARR_ESCAPE"));
         assert!(is_builtin_function_name("SUBSTRING"));
+        assert!(is_builtin_function_name("INT"));
+        assert!(is_builtin_function_name("VALUE"));
         assert!(!is_builtin_function_name("NOT_A_FUNCTION"));
     }
 
     #[test]
-    fn recognizes_builtin_and_global_exception_variables() {
+    fn recognizes_builtin_variables() {
         assert!(is_builtin_variable_name("SESSION"));
         assert!(is_builtin_variable_name("ERROR-STATUS"));
         assert!(is_builtin_variable_name("ENDKEY"));
-        assert!(is_builtin_variable_name("BATCHRUN"));
+        assert!(!is_builtin_variable_name("BATCHRUN"));
+        assert!(!is_builtin_variable_name("C-APPLICATION-MODE"));
+        assert!(!is_builtin_variable_name("EXECNAME"));
         assert!(!is_builtin_variable_name("NOT_A_VARIABLE"));
     }
 }
