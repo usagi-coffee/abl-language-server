@@ -192,6 +192,21 @@ pub fn collect_definition_sites(node: Node, src: &[u8], out: &mut Vec<AblDefinit
     }
 }
 
+/// Walks the syntax tree and extracts locations for local table field names.
+pub fn collect_local_table_field_sites(node: Node, src: &[u8], out: &mut Vec<AblDefinitionSite>) {
+    if matches!(node.kind(), "temp_table_field" | "field")
+        && let Some(name) = node.child_by_field_name("name")
+    {
+        push_site(name, src, out);
+    }
+
+    for i in 0..node.child_count() {
+        if let Some(ch) = node.child(i as u32) {
+            collect_local_table_field_sites(ch, src, out);
+        }
+    }
+}
+
 /// Walks the syntax tree and extracts locations for function definition names only.
 pub fn collect_function_definition_sites(node: Node, src: &[u8], out: &mut Vec<AblDefinitionSite>) {
     if is_function_definition_node(node.kind()) {
@@ -260,8 +275,8 @@ fn is_function_definition_node(node_kind: &str) -> bool {
 mod tests {
     use super::{
         collect_definition_symbols, collect_global_preprocessor_define_sites,
-        collect_global_preprocessor_define_symbols, collect_preprocessor_define_sites,
-        collect_preprocessor_define_symbols,
+        collect_global_preprocessor_define_symbols, collect_local_table_field_sites,
+        collect_preprocessor_define_sites, collect_preprocessor_define_symbols,
     };
 
     #[test]
@@ -353,5 +368,33 @@ END FUNCTION.
         );
         assert!(global_only.iter().all(|s| s.is_global));
         assert!(!global_only.iter().any(|s| s.label == "Test"));
+    }
+
+    #[test]
+    fn collects_local_table_field_sites() {
+        let src = r#"
+DEFINE TEMP-TABLE ttCustomer NO-UNDO
+  FIELD custNum AS INTEGER
+  FIELD custName AS CHARACTER.
+"#;
+
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_abl::LANGUAGE.into())
+            .expect("set abl language");
+        let tree = parser.parse(src, None).expect("parse source");
+
+        let mut sites = Vec::new();
+        collect_local_table_field_sites(tree.root_node(), src.as_bytes(), &mut sites);
+        assert!(
+            sites
+                .iter()
+                .any(|s| s.label.eq_ignore_ascii_case("custNum"))
+        );
+        assert!(
+            sites
+                .iter()
+                .any(|s| s.label.eq_ignore_ascii_case("custName"))
+        );
     }
 }

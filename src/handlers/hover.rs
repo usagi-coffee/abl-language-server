@@ -9,8 +9,8 @@ use crate::analysis::definition::{
 use crate::analysis::definitions::collect_definition_symbols;
 use crate::analysis::functions::{find_function_signature, find_function_signature_from_includes};
 use crate::analysis::hover::{
-    find_db_field_matches, find_local_table_field_hover, function_signature_hover, markdown_hover,
-    symbol_at_offset,
+    find_db_field_matches, find_local_table_field_hover, find_local_table_field_hover_by_symbol,
+    function_signature_hover, markdown_hover, symbol_at_offset,
 };
 use crate::analysis::includes::{
     collect_include_sites_from_tree, include_site_matches_file_offset,
@@ -176,6 +176,14 @@ impl Backend {
                     def.detail,
                     path.display()
                 ))));
+            }
+
+            if let Some(field_hover) = find_local_table_field_hover_by_symbol(
+                include_tree.root_node(),
+                &include_text,
+                &symbol,
+            ) {
+                return Ok(Some(field_hover));
             }
         }
 

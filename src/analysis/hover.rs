@@ -102,6 +102,51 @@ pub fn find_local_table_field_hover(root: Node<'_>, text: &str, offset: usize) -
     Some(markdown_hover(lines.join("\n\n")))
 }
 
+pub fn find_local_table_field_hover_by_symbol(
+    root: Node<'_>,
+    text: &str,
+    symbol: &str,
+) -> Option<Hover> {
+    let mut local_defs = Vec::new();
+    collect_local_table_definitions(root, text.as_bytes(), &mut local_defs);
+    let symbol_upper = symbol.to_ascii_uppercase();
+
+    let mut matches = Vec::new();
+    for def in local_defs {
+        for field in def.fields {
+            if field.name.eq_ignore_ascii_case(&symbol_upper) {
+                matches.push((def.name_upper.clone(), field));
+            }
+        }
+    }
+
+    if matches.is_empty() {
+        return None;
+    }
+
+    if matches.len() == 1 {
+        let (table, field) = &matches[0];
+        let mut lines = vec![format!("**Local Field** `{}`", field.name)];
+        lines.push(format!("Table: `{}`", table));
+        if let Some(ty) = &field.field_type {
+            lines.push(format!("Type: `{}`", ty));
+        }
+        return Some(markdown_hover(lines.join("\n\n")));
+    }
+
+    let preview = matches
+        .iter()
+        .take(8)
+        .map(|(table, _)| format!("- `{}`", table))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let suffix = if matches.len() > 8 { "\n- ..." } else { "" };
+    Some(markdown_hover(format!(
+        "**Local Field** `{}`\n\nFound in tables:\n{}{}",
+        symbol, preview, suffix
+    )))
+}
+
 fn extract_qualified_field_at_offset(
     text: &str,
     offset: usize,
@@ -158,4 +203,34 @@ fn extract_qualified_field_at_offset(
 
 fn is_ident_char(b: u8) -> bool {
     b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::find_local_table_field_hover_by_symbol;
+    use tower_lsp::lsp_types::HoverContents;
+
+    #[test]
+    fn finds_local_table_field_hover_by_symbol() {
+        let src = r#"
+DEFINE TEMP-TABLE ZM_CENY NO-UNDO
+  FIELD ZM_CENY_KOD AS CHARACTER
+  FIELD ZM_CENY_START AS DATE.
+"#;
+
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_abl::LANGUAGE.into())
+            .expect("set abl language");
+        let tree = parser.parse(src, None).expect("parse source");
+
+        let hover = find_local_table_field_hover_by_symbol(tree.root_node(), src, "ZM_CENY_KOD")
+            .expect("field hover");
+
+        let HoverContents::Markup(markup) = hover.contents else {
+            panic!("expected markdown hover");
+        };
+        assert!(markup.value.contains("ZM_CENY_KOD"));
+        assert!(markup.value.contains("ZM_CENY"));
+    }
 }

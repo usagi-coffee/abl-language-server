@@ -215,6 +215,14 @@ pub fn collect_active_buffer_like_names(
         }
     }
 
+    let mut local_table_defs = Vec::new();
+    collect_local_table_definitions(root, src, &mut local_table_defs);
+    for def in local_table_defs {
+        if !def.name_upper.is_empty() {
+            out.insert(def.name_upper);
+        }
+    }
+
     let mut identifiers = Vec::<Node>::new();
     collect_nodes_by_kind(root, "identifier", &mut identifiers);
     for ident in identifiers {

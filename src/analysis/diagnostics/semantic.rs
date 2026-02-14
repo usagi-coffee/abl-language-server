@@ -129,6 +129,12 @@ pub async fn collect_unknown_symbol_diags(
                 &mut known_variables,
                 &mut known_functions,
             );
+            collect_local_table_field_symbols(
+                backend,
+                include_tree.root_node(),
+                include_text.as_bytes(),
+                &mut known_variables,
+            );
             collect_function_arities(
                 include_tree.root_node(),
                 include_text.as_bytes(),

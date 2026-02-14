@@ -2,7 +2,7 @@ use crate::analysis::buffers::collect_buffer_mappings;
 use crate::analysis::definitions::{
     AblDefinitionSite, PreprocessorDefineSite, collect_definition_sites,
     collect_function_definition_sites, collect_global_preprocessor_define_sites,
-    collect_preprocessor_define_sites,
+    collect_local_table_field_sites, collect_preprocessor_define_sites,
 };
 use crate::analysis::includes::{
     collect_include_sites_from_tree, include_site_matches_file_offset, resolve_include_site_path,
@@ -170,6 +170,7 @@ pub fn resolve_local_definition_location(
 ) -> Option<Location> {
     let mut sites = Vec::new();
     collect_definition_sites(root, src, &mut sites);
+    collect_local_table_field_sites(root, src, &mut sites);
 
     let mut best_before: Option<(usize, Range)> = None;
     let mut best_after: Option<(usize, Range)> = None;
@@ -349,6 +350,11 @@ pub async fn resolve_include_definition_location(
 
             let mut sites = Vec::new();
             collect_definition_sites(
+                include_tree.root_node(),
+                include_text.as_bytes(),
+                &mut sites,
+            );
+            collect_local_table_field_sites(
                 include_tree.root_node(),
                 include_text.as_bytes(),
                 &mut sites,
