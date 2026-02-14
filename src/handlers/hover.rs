@@ -3,7 +3,8 @@ use tower_lsp::lsp_types::*;
 
 use crate::analysis::buffers::collect_buffer_mappings;
 use crate::analysis::definition::{
-    resolve_include_directive_location, resolve_preprocessor_define_match,
+    resolve_include_definition_location, resolve_include_directive_location,
+    resolve_preprocessor_define_match,
 };
 use crate::analysis::definitions::collect_definition_symbols;
 use crate::analysis::functions::{find_function_signature, find_function_signature_from_includes};
@@ -145,6 +146,37 @@ impl Backend {
                 "**{}**\n\nType: `{}`",
                 def.label, def.detail
             ))));
+        }
+
+        if let Some(location) = resolve_include_definition_location(
+            self,
+            &uri,
+            &text,
+            tree.root_node(),
+            &symbol,
+            offset,
+        )
+        .await
+            && let Ok(path) = location.uri.to_file_path()
+            && let Some((include_text, include_tree)) = self.get_cached_include_parse(&path).await
+        {
+            let mut include_defs = Vec::new();
+            collect_definition_symbols(
+                include_tree.root_node(),
+                include_text.as_bytes(),
+                &mut include_defs,
+            );
+            if let Some(def) = include_defs
+                .into_iter()
+                .find(|d| d.label.eq_ignore_ascii_case(&symbol))
+            {
+                return Ok(Some(markdown_hover(format!(
+                    "**{}**\n\nType: `{}`\n\nDefined in include: `{}`",
+                    def.label,
+                    def.detail,
+                    path.display()
+                ))));
+            }
         }
 
         let mut buffers = Vec::new();

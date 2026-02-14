@@ -272,6 +272,106 @@ pub async fn resolve_include_function_location(
         .map(|(_, location)| location)
 }
 
+pub async fn resolve_include_definition_location(
+    backend: &Backend,
+    uri: &Url,
+    text: &str,
+    root: Node<'_>,
+    symbol: &str,
+    offset: usize,
+) -> Option<Location> {
+    let scope = containing_scope(root, offset)?;
+    let current_path = uri.to_file_path().ok()?;
+    let include_sites = collect_include_sites_from_tree(root, text.as_bytes());
+    let mut available_define_sites = Vec::new();
+    collect_preprocessor_define_sites(root, text.as_bytes(), &mut available_define_sites);
+
+    let mut parsed_include_defs: HashMap<PathBuf, Vec<AblDefinitionSite>> = HashMap::new();
+    let mut include_before: Option<(usize, Location)> = None;
+    let mut include_after: Option<(usize, Location)> = None;
+
+    for include in include_sites {
+        if include.start_offset < scope.start || include.start_offset > scope.end {
+            continue;
+        }
+
+        let include_path_value = resolve_include_site_path(&include, &available_define_sites);
+        let Some(include_path) = backend
+            .resolve_include_path_for(&current_path, &include_path_value)
+            .await
+        else {
+            continue;
+        };
+
+        if !parsed_include_defs.contains_key(&include_path) {
+            let Some((include_text, include_tree)) =
+                backend.get_cached_include_parse(&include_path).await
+            else {
+                continue;
+            };
+
+            let mut sites = Vec::new();
+            collect_definition_sites(
+                include_tree.root_node(),
+                include_text.as_bytes(),
+                &mut sites,
+            );
+            parsed_include_defs.insert(include_path.clone(), sites);
+
+            let mut include_global_defines = Vec::new();
+            collect_global_preprocessor_define_sites(
+                include_tree.root_node(),
+                include_text.as_bytes(),
+                &mut include_global_defines,
+            );
+            for mut define in include_global_defines {
+                define.start_byte = include.start_offset;
+                available_define_sites.push(define);
+            }
+        }
+
+        let Some(def_sites) = parsed_include_defs.get(&include_path) else {
+            continue;
+        };
+        let Some(include_uri) = Url::from_file_path(&include_path).ok() else {
+            continue;
+        };
+
+        for site in def_sites {
+            if !site.label.eq_ignore_ascii_case(symbol) {
+                continue;
+            }
+
+            let location = Location {
+                uri: include_uri.clone(),
+                range: site.range,
+            };
+
+            if include.start_offset <= offset {
+                let should_take = include_before
+                    .as_ref()
+                    .map(|(site_offset, _)| include.start_offset > *site_offset)
+                    .unwrap_or(true);
+                if should_take {
+                    include_before = Some((include.start_offset, location));
+                }
+            } else {
+                let should_take = include_after
+                    .as_ref()
+                    .map(|(site_offset, _)| include.start_offset < *site_offset)
+                    .unwrap_or(true);
+                if should_take {
+                    include_after = Some((include.start_offset, location));
+                }
+            }
+        }
+    }
+
+    include_before
+        .or(include_after)
+        .map(|(_, location)| location)
+}
+
 pub struct PreprocessorDefineMatch {
     pub name: String,
     pub value: Option<String>,

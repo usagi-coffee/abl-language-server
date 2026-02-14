@@ -2,8 +2,8 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 
 use crate::analysis::definition::{
-    resolve_buffer_alias_table_location, resolve_include_directive_location,
-    resolve_include_function_location, resolve_local_definition_location,
+    resolve_buffer_alias_table_location, resolve_include_definition_location,
+    resolve_include_directive_location, resolve_local_definition_location,
     resolve_preprocessor_define_match,
 };
 use crate::analysis::schema::normalize_lookup_key;
@@ -86,9 +86,15 @@ impl Backend {
             return Ok(Some(GotoDefinitionResponse::Scalar(location)));
         }
 
-        if let Some(location) =
-            resolve_include_function_location(self, &uri, &text, tree.root_node(), &symbol, offset)
-                .await
+        if let Some(location) = resolve_include_definition_location(
+            self,
+            &uri,
+            &text,
+            tree.root_node(),
+            &symbol,
+            offset,
+        )
+        .await
         {
             return Ok(Some(GotoDefinitionResponse::Scalar(location)));
         }
