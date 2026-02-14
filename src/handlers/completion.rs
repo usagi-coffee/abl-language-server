@@ -8,7 +8,8 @@ use tree_sitter::Node;
 
 use crate::analysis::buffers::collect_buffer_mappings;
 use crate::analysis::completion::{
-    lookup_case_insensitive_fields, qualifier_before_dot, text_has_dot_before_cursor,
+    lookup_case_insensitive_fields, lookup_case_insensitive_indexes_by_table, qualifier_before_dot,
+    text_has_dot_before_cursor, use_index_table_symbol_at_offset,
 };
 use crate::analysis::completion_support::{
     build_field_completion_items, completion_response, is_parameter_symbol_at_byte,
@@ -72,6 +73,61 @@ impl Backend {
         };
 
         let prefix = ascii_ident_prefix(&text, offset);
+        let root = tree.root_node();
+
+        if let Some(use_index_symbol) = use_index_table_symbol_at_offset(root, &text, offset) {
+            let mut table_key = use_index_symbol.to_ascii_uppercase();
+            if lookup_case_insensitive_indexes_by_table(&self.db_indexes_by_table, &table_key)
+                .is_none()
+            {
+                let mut mappings = Vec::new();
+                collect_buffer_mappings(root, text.as_bytes(), &mut mappings);
+                let mut before: Option<(usize, String)> = None;
+                let mut after: Option<(usize, String)> = None;
+                for mapping in mappings {
+                    if !mapping.alias.eq_ignore_ascii_case(&use_index_symbol) {
+                        continue;
+                    }
+                    if mapping.start_byte <= offset {
+                        let should_take = before
+                            .as_ref()
+                            .map(|(start, _)| mapping.start_byte > *start)
+                            .unwrap_or(true);
+                        if should_take {
+                            before = Some((mapping.start_byte, mapping.table.clone()));
+                        }
+                    } else {
+                        let should_take = after
+                            .as_ref()
+                            .map(|(start, _)| mapping.start_byte < *start)
+                            .unwrap_or(true);
+                        if should_take {
+                            after = Some((mapping.start_byte, mapping.table.clone()));
+                        }
+                    }
+                }
+                if let Some((_, table)) = before.or(after) {
+                    table_key = table.to_ascii_uppercase();
+                }
+            }
+
+            let pref_up = prefix.to_ascii_uppercase();
+            let items =
+                lookup_case_insensitive_indexes_by_table(&self.db_indexes_by_table, &table_key)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|index| index.to_ascii_uppercase().starts_with(&pref_up))
+                    .map(|index| CompletionItem {
+                        label: index.clone(),
+                        kind: Some(CompletionItemKind::REFERENCE),
+                        detail: Some(format!("DB index ({table_key})")),
+                        insert_text: Some(index),
+                        insert_text_format: Some(InsertTextFormat::PLAIN_TEXT),
+                        ..Default::default()
+                    })
+                    .collect::<Vec<_>>();
+            return Ok(Some(completion_response(items, is_incomplete)));
+        }
 
         // Dot completion: table_or_buffer.<prefix>
         let dot_qualifier = qualifier_before_dot(&text, offset, &prefix).or_else(|| {
@@ -153,7 +209,6 @@ impl Backend {
 
         let mut candidates = Vec::<CompletionCandidate>::new();
 
-        let root = tree.root_node();
         let current_scope = containing_scope(root, offset);
         let mut symbols = Vec::new();
         collect_definition_symbols(root, text.as_bytes(), &mut symbols);

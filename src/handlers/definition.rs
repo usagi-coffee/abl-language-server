@@ -1,6 +1,10 @@
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 
+use crate::analysis::buffers::collect_buffer_mappings;
+use crate::analysis::completion::{
+    lookup_case_insensitive_indexes_by_table, use_index_table_symbol_at_offset,
+};
 use crate::analysis::definition::{
     resolve_buffer_alias_table_location, resolve_include_definition_location,
     resolve_include_directive_location, resolve_local_definition_location,
@@ -64,6 +68,17 @@ impl Backend {
             None => return Ok(None),
         };
         let symbol_upper = normalize_lookup_key(&symbol, false);
+        let use_index_table_key =
+            resolve_use_index_table_key(self, tree.root_node(), &text, offset);
+
+        if let Some(table_key) = &use_index_table_key
+            && lookup_case_insensitive_indexes_by_table(&self.db_indexes_by_table, table_key)
+                .is_some_and(|indexes| indexes.iter().any(|idx| idx.eq_ignore_ascii_case(&symbol)))
+            && let Some(location) =
+                lookup_schema_location(&self.db_index_definitions, &symbol_upper)
+        {
+            return Ok(Some(GotoDefinitionResponse::Scalar(location)));
+        }
 
         if let Some(location) = resolve_buffer_alias_table_location(
             self,
@@ -113,4 +128,50 @@ impl Backend {
 
         Ok(None)
     }
+}
+
+fn resolve_use_index_table_key(
+    backend: &Backend,
+    root: tree_sitter::Node<'_>,
+    text: &str,
+    offset: usize,
+) -> Option<String> {
+    let use_index_symbol = use_index_table_symbol_at_offset(root, text, offset)?;
+    let mut table_key = use_index_symbol.to_ascii_uppercase();
+    if lookup_case_insensitive_indexes_by_table(&backend.db_indexes_by_table, &table_key).is_some()
+    {
+        return Some(table_key);
+    }
+
+    let mut mappings = Vec::new();
+    collect_buffer_mappings(root, text.as_bytes(), &mut mappings);
+    let mut before: Option<(usize, String)> = None;
+    let mut after: Option<(usize, String)> = None;
+    for mapping in mappings {
+        if !mapping.alias.eq_ignore_ascii_case(&use_index_symbol) {
+            continue;
+        }
+        if mapping.start_byte <= offset {
+            let should_take = before
+                .as_ref()
+                .map(|(start, _)| mapping.start_byte > *start)
+                .unwrap_or(true);
+            if should_take {
+                before = Some((mapping.start_byte, mapping.table.clone()));
+            }
+        } else {
+            let should_take = after
+                .as_ref()
+                .map(|(start, _)| mapping.start_byte < *start)
+                .unwrap_or(true);
+            if should_take {
+                after = Some((mapping.start_byte, mapping.table.clone()));
+            }
+        }
+    }
+    if let Some((_, table)) = before.or(after) {
+        table_key = table.to_ascii_uppercase();
+    }
+
+    Some(table_key)
 }

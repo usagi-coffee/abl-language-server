@@ -41,6 +41,8 @@ async fn main() {
             db_table_definitions: DashMap::new(),
             db_field_definitions: DashMap::new(),
             db_index_definitions: DashMap::new(),
+            db_indexes_by_table: DashMap::new(),
+            db_index_fields_by_table_index: DashMap::new(),
             db_fields_by_table: DashMap::new(),
             include_completion_cache: DashMap::new(),
             include_parse_cache: DashMap::new(),

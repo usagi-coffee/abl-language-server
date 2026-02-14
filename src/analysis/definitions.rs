@@ -207,23 +207,6 @@ pub fn collect_local_table_field_sites(node: Node, src: &[u8], out: &mut Vec<Abl
     }
 }
 
-/// Walks the syntax tree and extracts locations for function definition names only.
-pub fn collect_function_definition_sites(node: Node, src: &[u8], out: &mut Vec<AblDefinitionSite>) {
-    if is_function_definition_node(node.kind()) {
-        if let Some(name) = node.child_by_field_name("name") {
-            push_site(name, src, out);
-        } else if let Some(name) = first_descendant_by_kind(node, "identifier") {
-            push_site(name, src, out);
-        }
-    }
-
-    for i in 0..node.child_count() {
-        if let Some(ch) = node.child(i as u32) {
-            collect_function_definition_sites(ch, src, out);
-        }
-    }
-}
-
 fn push_symbol(
     name_node: Node,
     src: &[u8],
@@ -262,13 +245,6 @@ fn symbol_detail(node: Node, src: &[u8], default_detail: &'static str) -> String
     }
 
     default_detail.to_string()
-}
-
-fn is_function_definition_node(node_kind: &str) -> bool {
-    matches!(
-        node_kind,
-        "function_definition" | "function_forward_definition"
-    )
 }
 
 #[cfg(test)]

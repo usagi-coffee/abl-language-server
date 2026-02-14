@@ -162,6 +162,43 @@ pub fn collect_df_index_sites(node: Node, src: &[u8], out: &mut Vec<DfIndexSite>
     }
 }
 
+pub struct DfTableIndex {
+    pub table: String,
+    pub index: String,
+    pub fields: Vec<String>,
+}
+
+/// Collects `(table, index)` pairs from `ADD INDEX "index" ON "table"`.
+pub fn collect_df_table_indexes(node: Node, src: &[u8], out: &mut Vec<DfTableIndex>) {
+    if node.kind() == "add_index_statement"
+        && let (Some(index_node), Some(table_node)) = (
+            node.child_by_field_name("index"),
+            node.child_by_field_name("table"),
+        )
+        && let (Ok(index_raw), Ok(table_raw)) =
+            (index_node.utf8_text(src), table_node.utf8_text(src))
+        && let (Some(index), Some(table)) = (unquote(index_raw), unquote(table_raw))
+    {
+        let fields = node
+            .utf8_text(src)
+            .ok()
+            .map(extract_index_field_names)
+            .unwrap_or_default();
+
+        out.push(DfTableIndex {
+            table: table.to_string(),
+            index: index.to_string(),
+            fields,
+        });
+    }
+
+    for i in 0..node.child_count() {
+        if let Some(ch) = node.child(i as u32) {
+            collect_df_table_indexes(ch, src, out);
+        }
+    }
+}
+
 fn unquote(value: &str) -> Option<&str> {
     let trimmed = value.trim();
     if trimmed.len() >= 2 {
@@ -199,11 +236,28 @@ fn extract_first_quoted(raw: &str) -> Option<String> {
     None
 }
 
+fn extract_index_field_names(raw: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for line in raw.lines() {
+        if !line
+            .trim_start()
+            .to_ascii_uppercase()
+            .starts_with("INDEX-FIELD")
+        {
+            continue;
+        }
+        if let Some(field_name) = extract_first_quoted(line) {
+            out.push(field_name);
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        collect_df_field_sites, collect_df_index_sites, collect_df_table_names,
-        collect_df_table_sites,
+        collect_df_field_sites, collect_df_index_sites, collect_df_table_indexes,
+        collect_df_table_names, collect_df_table_sites,
     };
     use std::collections::HashSet;
 
@@ -218,6 +272,7 @@ ADD FIELD "z9zw_id" OF "z9zw_mstr" AS character
 .
 ADD INDEX "z9zw_idx" ON "z9zw_mstr"
   UNIQUE
+  INDEX-FIELD "z9zw_id" ASC
 .
 "#;
 
@@ -254,5 +309,16 @@ ADD INDEX "z9zw_idx" ON "z9zw_mstr"
                 .iter()
                 .any(|s| s.name.eq_ignore_ascii_case("Z9ZW_IDX"))
         );
+
+        let mut table_indexes = Vec::new();
+        collect_df_table_indexes(tree.root_node(), src.as_bytes(), &mut table_indexes);
+        assert!(table_indexes.iter().any(|i| {
+            i.table.eq_ignore_ascii_case("Z9ZW_MSTR") && i.index.eq_ignore_ascii_case("Z9ZW_IDX")
+        }));
+        let idx = table_indexes
+            .iter()
+            .find(|i| i.index.eq_ignore_ascii_case("Z9ZW_IDX"))
+            .expect("index fields");
+        assert_eq!(idx.fields, vec!["z9zw_id"]);
     }
 }

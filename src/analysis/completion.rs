@@ -1,5 +1,6 @@
 use crate::backend::DbFieldInfo;
 use tower_lsp::lsp_types::Documentation;
+use tree_sitter::Node;
 
 pub fn qualifier_before_dot(text: &str, offset: usize, prefix: &str) -> Option<String> {
     let bytes = text.as_bytes();
@@ -52,6 +53,67 @@ pub fn lookup_case_insensitive_fields(
         })
 }
 
+pub fn lookup_case_insensitive_indexes_by_table(
+    map: &dashmap::DashMap<String, Vec<String>>,
+    key: &str,
+) -> Option<Vec<String>> {
+    map.get(key)
+        .map(|indexes| indexes.value().clone())
+        .or_else(|| {
+            map.iter().find_map(|entry| {
+                if entry.key().eq_ignore_ascii_case(key) {
+                    Some(entry.value().clone())
+                } else {
+                    None
+                }
+            })
+        })
+}
+
+pub fn use_index_table_symbol_at_offset(
+    root: Node<'_>,
+    text: &str,
+    offset: usize,
+) -> Option<String> {
+    let src = text.as_bytes();
+    let probe = offset.saturating_sub(1).min(src.len().saturating_sub(1));
+    let mut node = root.named_descendant_for_byte_range(probe, probe)?;
+
+    loop {
+        let in_index = node
+            .child_by_field_name("index")
+            .map(|index| offset >= index.start_byte() && offset <= index.end_byte())
+            .unwrap_or(false);
+        if in_index {
+            let table_node = node
+                .child_by_field_name("table")
+                .or_else(|| node.child_by_field_name("record"));
+            if let Some(table_node) = table_node
+                && let Ok(raw) = table_node.utf8_text(src)
+            {
+                let symbol = raw
+                    .trim()
+                    .split('.')
+                    .next_back()
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string();
+                if !symbol.is_empty() {
+                    return Some(symbol);
+                }
+            }
+            return None;
+        }
+
+        let Some(parent) = node.parent() else {
+            break;
+        };
+        node = parent;
+    }
+
+    None
+}
+
 pub fn field_detail(field: &DbFieldInfo, table_key: &str) -> String {
     match field.field_type.as_deref() {
         Some(ty) => format!("{ty} ({table_key})"),
@@ -88,6 +150,7 @@ pub fn field_documentation(field: &DbFieldInfo) -> Option<Documentation> {
 mod tests {
     use super::{
         field_detail, field_documentation, qualifier_before_dot, text_has_dot_before_cursor,
+        use_index_table_symbol_at_offset,
     };
     use crate::backend::DbFieldInfo;
     use tower_lsp::lsp_types::Documentation;
@@ -124,5 +187,23 @@ mod tests {
             }
             _ => panic!("unexpected documentation kind"),
         }
+    }
+
+    #[test]
+    fn detects_use_index_table_symbol() {
+        let src = r#"
+FOR EACH Customer USE-INDEX CustNum NO-LOCK:
+END.
+"#;
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_abl::LANGUAGE.into())
+            .expect("set abl language");
+        let tree = parser.parse(src, None).expect("parse source");
+
+        let offset = src.find("CustNum").expect("index usage");
+        let table = use_index_table_symbol_at_offset(tree.root_node(), src, offset + 2)
+            .expect("table symbol");
+        assert_eq!(table, "Customer");
     }
 }

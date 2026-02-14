@@ -67,6 +67,8 @@ pub struct BackendState {
     pub db_table_definitions: DashMap<String, Vec<Location>>,
     pub db_field_definitions: DashMap<String, Vec<Location>>,
     pub db_index_definitions: DashMap<String, Vec<Location>>,
+    pub db_indexes_by_table: DashMap<String, Vec<String>>,
+    pub db_index_fields_by_table_index: DashMap<String, Vec<String>>,
     pub db_fields_by_table: DashMap<String, Vec<DbFieldInfo>>,
     pub include_completion_cache: DashMap<PathBuf, IncludeCompletionCacheEntry>,
     pub include_parse_cache: DashMap<PathBuf, IncludeParseCacheEntry>,
@@ -499,6 +501,8 @@ impl Backend {
         let mut definitions = HashMap::<String, Vec<Location>>::new();
         let mut field_definitions = HashMap::<String, Vec<Location>>::new();
         let mut index_definitions = HashMap::<String, Vec<Location>>::new();
+        let mut indexes_by_table = HashMap::<String, Vec<String>>::new();
+        let mut index_fields_by_table_index = HashMap::<String, Vec<String>>::new();
         let mut fields_by_table = HashMap::<String, Vec<DbFieldInfo>>::new();
         for dumpfile in dumpfiles {
             let Some(path) = resolve_dumpfile_path(workspace_root, dumpfile) else {
@@ -590,6 +594,23 @@ impl Backend {
                         range: site.range,
                     });
             }
+
+            let mut table_indexes = Vec::new();
+            crate::analysis::df::collect_df_table_indexes(
+                tree.root_node(),
+                contents.as_bytes(),
+                &mut table_indexes,
+            );
+            for pair in table_indexes {
+                let table_upper = pair.table.to_ascii_uppercase();
+                let index_upper = pair.index.to_ascii_uppercase();
+                indexes_by_table
+                    .entry(table_upper.clone())
+                    .or_default()
+                    .push(pair.index.clone());
+                index_fields_by_table_index
+                    .insert(format!("{table_upper}\u{1f}{index_upper}"), pair.fields);
+            }
         }
 
         self.db_tables.clear();
@@ -611,6 +632,22 @@ impl Backend {
         self.db_index_definitions.clear();
         for (k, v) in index_definitions {
             self.db_index_definitions.insert(k, v);
+        }
+        for indexes in indexes_by_table.values_mut() {
+            indexes.sort_by(|a, b| {
+                a.to_ascii_uppercase()
+                    .cmp(&b.to_ascii_uppercase())
+                    .then(a.cmp(b))
+            });
+            indexes.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+        }
+        self.db_indexes_by_table.clear();
+        for (k, v) in indexes_by_table {
+            self.db_indexes_by_table.insert(k, v);
+        }
+        self.db_index_fields_by_table_index.clear();
+        for (k, v) in index_fields_by_table_index {
+            self.db_index_fields_by_table_index.insert(k, v);
         }
         for fields in fields_by_table.values_mut() {
             fields.sort_by(|a, b| {
