@@ -208,6 +208,11 @@ impl Backend {
         {
             return Ok(Some(local_field_hover));
         }
+        if let Some(local_field_hover) =
+            find_local_table_field_hover_by_symbol(tree.root_node(), &text, &symbol)
+        {
+            return Ok(Some(local_field_hover));
+        }
 
         let field_matches = find_db_field_matches(&self.db_fields_by_table, &symbol_upper);
         if !field_matches.is_empty() {
