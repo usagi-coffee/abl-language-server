@@ -24,17 +24,54 @@ pub async fn resolve_include_directive_location(
     offset: usize,
 ) -> Option<Location> {
     let include_sites = collect_include_sites_from_tree(root, text.as_bytes());
-    let include = include_sites
+    let target = include_sites
         .into_iter()
         .find(|site| include_site_matches_file_offset(site, offset))?;
+    let target_key = (target.start_offset, target.file_start_offset);
 
     let current_path = uri.to_file_path().ok()?;
-    let mut define_sites = Vec::new();
-    collect_preprocessor_define_sites(root, text.as_bytes(), &mut define_sites);
-    let include_path_value = resolve_include_site_path(&include, &define_sites);
-    let include_path = backend
-        .resolve_include_path_for(&current_path, &include_path_value)
-        .await?;
+    let mut available_define_sites = Vec::new();
+    collect_preprocessor_define_sites(root, text.as_bytes(), &mut available_define_sites);
+
+    let include_sites = collect_include_sites_from_tree(root, text.as_bytes());
+    let mut include_path: Option<PathBuf> = None;
+
+    for include in include_sites {
+        if include.start_offset > target_key.0 {
+            break;
+        }
+
+        let include_path_value = resolve_include_site_path(&include, &available_define_sites);
+        let Some(resolved_path) = backend
+            .resolve_include_path_for(&current_path, &include_path_value)
+            .await
+        else {
+            continue;
+        };
+
+        if (include.start_offset, include.file_start_offset) == target_key {
+            include_path = Some(resolved_path);
+            break;
+        }
+
+        let Some((include_text, include_tree)) =
+            backend.get_cached_include_parse(&resolved_path).await
+        else {
+            continue;
+        };
+        let mut include_global_defines = Vec::new();
+        collect_global_preprocessor_define_sites(
+            include_tree.root_node(),
+            include_text.as_bytes(),
+            &mut include_global_defines,
+        );
+        for mut define in include_global_defines {
+            define.start_byte = include.start_offset;
+            available_define_sites.push(define);
+        }
+    }
+
+    let include_path = include_path?;
     let include_uri = Url::from_file_path(include_path).ok()?;
 
     Some(Location {
