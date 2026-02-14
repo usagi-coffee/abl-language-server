@@ -11,7 +11,9 @@ use crate::analysis::hover::{
     find_db_field_matches, find_local_table_field_hover, function_signature_hover, markdown_hover,
     symbol_at_offset,
 };
-use crate::analysis::includes::collect_include_sites;
+use crate::analysis::includes::{
+    collect_include_sites_from_tree, include_site_matches_file_offset,
+};
 use crate::analysis::schema::normalize_lookup_key;
 use crate::analysis::schema_lookup::has_schema_key;
 use crate::backend::Backend;
@@ -48,9 +50,9 @@ impl Backend {
                 .ok()
                 .map(|p| p.display().to_string())
                 .unwrap_or_else(|| location.uri.to_string());
-            let include_site = collect_include_sites(&text)
+            let include_site = collect_include_sites_from_tree(tree.root_node(), text.as_bytes())
                 .into_iter()
-                .find(|site| offset >= site.start_offset && offset <= site.end_offset);
+                .find(|site| include_site_matches_file_offset(site, offset));
 
             let mut lines = vec![
                 "**Include File**".to_string(),

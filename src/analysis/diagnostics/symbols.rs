@@ -102,6 +102,9 @@ fn collect_identifier_refs_from_expression(
         "preprocessor_reference" | "preprocessor_directive" | "macro_concatenated_name" => {
             return;
         }
+        "include_file_reference" => {
+            return;
+        }
         "identifier" => {
             if let Ok(name_raw) = expr.utf8_text(src) {
                 let display_name = name_raw.trim().to_string();
@@ -412,5 +415,27 @@ a = NEW JsonArray(x).
 
         assert!(refs.iter().all(|r| r.name_upper != "JSONARRAY"));
         assert!(refs.iter().any(|r| r.name_upper == "X"));
+    }
+
+    #[test]
+    fn ignores_include_file_reference_for_unknown_variable_refs() {
+        let src = r#"
+{{&US_BBI}gprun.i ""zmzlec2got.p"" "(input zlec,zlec)"}.
+"#;
+
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_abl::LANGUAGE.into())
+            .expect("set abl language");
+        let tree = parser.parse(src, None).expect("parse source");
+
+        let mut refs = Vec::new();
+        collect_identifier_refs_for_unknown_symbol_diag(
+            tree.root_node(),
+            src.as_bytes(),
+            &mut refs,
+        );
+
+        assert!(refs.is_empty());
     }
 }

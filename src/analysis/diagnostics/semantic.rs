@@ -19,7 +19,7 @@ use crate::analysis::diagnostics::symbols::{
     collect_identifier_refs_for_unknown_symbol_diag, collect_known_symbols,
     collect_local_table_field_symbols, normalize_identifier_refs,
 };
-use crate::analysis::includes::{collect_include_sites, resolve_include_site_path};
+use crate::analysis::includes::{collect_include_sites_from_tree, resolve_include_site_path};
 use crate::backend::Backend;
 
 pub fn should_accept_version(backend: &Backend, uri: &Url, version: i32) -> bool {
@@ -218,7 +218,7 @@ async fn collect_resolved_includes_for_file(
     inherited_globals: &[PreprocessorDefineSite],
     state: &mut IncludeCollectState,
 ) {
-    let include_sites = collect_include_sites(file_text);
+    let include_sites = collect_include_sites_from_tree(file_root, file_text.as_bytes());
     let mut available_define_sites = inherited_globals.to_vec();
     collect_preprocessor_define_sites(file_root, file_text.as_bytes(), &mut available_define_sites);
 

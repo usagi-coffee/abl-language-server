@@ -6,7 +6,7 @@ use tree_sitter::Node;
 use crate::analysis::definitions::{
     collect_global_preprocessor_define_sites, collect_preprocessor_define_sites,
 };
-use crate::analysis::includes::collect_include_sites;
+use crate::analysis::includes::collect_include_sites_from_tree;
 use crate::analysis::includes::resolve_include_site_path;
 use crate::analysis::scopes::containing_scope;
 use crate::backend::Backend;
@@ -192,7 +192,7 @@ pub async fn find_function_signature_from_includes(
     let scope = containing_scope(root, offset)?;
     let current_path = uri.to_file_path().ok()?;
 
-    let include_sites = collect_include_sites(text);
+    let include_sites = collect_include_sites_from_tree(root, text.as_bytes());
     let mut available_define_sites = Vec::new();
     collect_preprocessor_define_sites(root, text.as_bytes(), &mut available_define_sites);
     let mut seen_files = HashSet::new();

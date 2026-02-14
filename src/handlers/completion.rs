@@ -19,7 +19,7 @@ use crate::analysis::definitions::{
     collect_global_preprocessor_define_symbols, collect_preprocessor_define_sites,
     collect_preprocessor_define_symbols,
 };
-use crate::analysis::includes::{collect_include_sites, resolve_include_site_path};
+use crate::analysis::includes::{collect_include_sites_from_tree, resolve_include_site_path};
 use crate::analysis::local_tables::collect_local_table_definitions;
 use crate::analysis::scopes::containing_scope;
 use crate::backend::Backend;
@@ -240,7 +240,7 @@ impl Backend {
             return (Vec::new(), false);
         };
 
-        let include_sites = collect_include_sites(text);
+        let include_sites = collect_include_sites_from_tree(root, text.as_bytes());
         let mut available_define_sites = Vec::new();
         collect_preprocessor_define_sites(root, text.as_bytes(), &mut available_define_sites);
         let mut parsed_files = HashSet::new();

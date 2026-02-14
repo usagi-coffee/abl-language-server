@@ -4,7 +4,9 @@ use crate::analysis::definitions::{
     collect_function_definition_sites, collect_global_preprocessor_define_sites,
     collect_preprocessor_define_sites,
 };
-use crate::analysis::includes::{collect_include_sites, resolve_include_site_path};
+use crate::analysis::includes::{
+    collect_include_sites_from_tree, include_site_matches_file_offset, resolve_include_site_path,
+};
 use crate::analysis::schema::normalize_lookup_key;
 use crate::analysis::schema_lookup::pick_single_location;
 use crate::analysis::scopes::containing_scope;
@@ -21,10 +23,10 @@ pub async fn resolve_include_directive_location(
     root: Node<'_>,
     offset: usize,
 ) -> Option<Location> {
-    let include_sites = collect_include_sites(text);
+    let include_sites = collect_include_sites_from_tree(root, text.as_bytes());
     let include = include_sites
         .into_iter()
-        .find(|site| offset >= site.start_offset && offset <= site.end_offset)?;
+        .find(|site| include_site_matches_file_offset(site, offset))?;
 
     let current_path = uri.to_file_path().ok()?;
     let mut define_sites = Vec::new();
@@ -175,7 +177,7 @@ pub async fn resolve_include_function_location(
 ) -> Option<Location> {
     let scope = containing_scope(root, offset)?;
     let current_path = uri.to_file_path().ok()?;
-    let include_sites = collect_include_sites(text);
+    let include_sites = collect_include_sites_from_tree(root, text.as_bytes());
     let mut available_define_sites = Vec::new();
     collect_preprocessor_define_sites(root, text.as_bytes(), &mut available_define_sites);
 
@@ -301,7 +303,7 @@ pub async fn resolve_preprocessor_define_match(
 
     let scope = containing_scope(root, offset)?;
     let current_path = uri.to_file_path().ok()?;
-    let include_sites = collect_include_sites(text);
+    let include_sites = collect_include_sites_from_tree(root, text.as_bytes());
     let mut available_define_sites = Vec::new();
     collect_preprocessor_define_sites(root, text.as_bytes(), &mut available_define_sites);
 

@@ -106,8 +106,8 @@ enabled = true
 When resolving `{include.i}`, the server checks in this order:
 
 1. Absolute include path (if include is absolute)
-2. Each `propath` entry in the order listed in `abl.toml`
-3. Workspace root
+2. Each `propath` entry in merge order (including inherited configs)
+3. Each config file directory participating in inheritance merge order (implicit include roots)
 
 ## License
 

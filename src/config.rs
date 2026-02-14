@@ -316,9 +316,16 @@ fn merge_partial_into(base: &mut AblConfig, partial: &PartialAblConfig, config_p
             .extend(resolve_path_list_relative_to_config(config_path, dumpfile));
     }
     if let Some(propath) = &partial.propath {
-        base.propath
-            .extend(resolve_path_list_relative_to_config(config_path, propath));
+        for resolved in resolve_path_list_relative_to_config(config_path, propath) {
+            push_unique_string_value(&mut base.propath, resolved);
+        }
     }
+
+    let config_dir = config_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf();
+    push_unique_string_path(&mut base.propath, &config_dir);
 }
 
 fn resolve_path_list_relative_to_config(config_path: &Path, values: &[String]) -> Vec<String> {
@@ -348,6 +355,17 @@ fn normalize_path_lexical(path: PathBuf) -> PathBuf {
         out.push(component.as_os_str());
     }
     out
+}
+
+fn push_unique_string_path(out: &mut Vec<String>, path: &Path) {
+    push_unique_string_value(out, path.to_string_lossy().to_string());
+}
+
+fn push_unique_string_value(out: &mut Vec<String>, value: String) {
+    if out.iter().any(|existing| existing == &value) {
+        return;
+    }
+    out.push(value);
 }
 
 fn deserialize_dumpfile<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
@@ -543,6 +561,11 @@ ignore = ["CHILD-GLOBAL"]
                     .parent()
                     .expect("parent dir")
                     .join("parent/includes")
+                    .to_string_lossy()
+                    .to_string(),
+                parent
+                    .parent()
+                    .expect("parent dir")
                     .to_string_lossy()
                     .to_string(),
                 child
