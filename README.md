@@ -77,20 +77,21 @@ enabled = true
 | `completion.enabled`      | `bool`               | `true`  | Enables completion responses                                                          |
 | `diagnostics.enabled`     | `bool`               | `true`  | Enables/disables all diagnostic publishing (syntax + semantic arity)                 |
 | `diagnostics.unknown_variables.enabled`  | `bool`               | `true`  | Enables/disables unknown-variable diagnostics                                           |
-| `diagnostics.unknown_variables.exclude`  | `string \| string[]` | `[]`    | File/path patterns where unknown-variable diagnostics are skipped                      |
+| `diagnostics.unknown_variables.exclude`  | `string \| string[]` | `[]`    | File/path patterns where unknown-variable diagnostics are skipped; relative patterns resolve from the config file that defines them |
 | `diagnostics.unknown_variables.ignore`   | `string \| string[]` | `[]`    | Symbol names ignored by unknown-variable diagnostics (case-insensitive)               |
 | `diagnostics.unknown_functions.enabled`  | `bool`               | `true`  | Enables/disables unknown-function diagnostics                                           |
-| `diagnostics.unknown_functions.exclude`  | `string \| string[]` | `[]`    | File/path patterns where unknown-function diagnostics are skipped                      |
+| `diagnostics.unknown_functions.exclude`  | `string \| string[]` | `[]`    | File/path patterns where unknown-function diagnostics are skipped; relative patterns resolve from the config file that defines them |
 | `diagnostics.unknown_functions.ignore`   | `string \| string[]` | `[]`    | Function names ignored by unknown-function diagnostics (case-insensitive)             |
 | `semantic_tokens.enabled` | `bool`               | `true`  | Enables semantic token responses (DB table identifier highlighting)                   |
-| `dumpfile`                | `string \| string[]` | `[]`    | Path(s) to `.df` dump files; relative paths resolve from workspace root               |
-| `propath`                 | `string \| string[]` | `[]`    | Include search roots for `{...}` includes; relative paths resolve from workspace root |
+| `dumpfile`                | `string \| string[]` | `[]`    | Path(s) to `.df` dump files; relative paths resolve from the config file that defines them |
+| `propath`                 | `string \| string[]` | `[]`    | Include search roots for `{...}` includes; relative paths resolve from the config file that defines them |
 
 ### Inheritance behavior
 
 - `inherits` supports a single path or a list of paths.
 - Relative paths are resolved from the current `abl.toml` directory.
 - Parent config(s) are merged first, then the current file overrides them.
+- `dumpfile` and `propath` are concatenated in merge order (parent entries first, then child entries).
 
 ### Dumpfile behavior
 

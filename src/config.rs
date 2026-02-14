@@ -1,6 +1,7 @@
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::io::ErrorKind;
+use std::path::Component;
 use std::path::{Path, PathBuf};
 use tower_lsp::lsp_types::InitializeParams;
 
@@ -240,7 +241,7 @@ async fn load_with_inheritance(path: &Path, root_partial: PartialAblConfig) -> A
     let mut merged = AblConfig::default();
     for config_path in order {
         if let Some(partial) = partials.get(&config_path) {
-            merge_partial_into(&mut merged, partial);
+            merge_partial_into(&mut merged, partial, &config_path);
         }
     }
     merged
@@ -267,7 +268,7 @@ fn path_identity(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
-fn merge_partial_into(base: &mut AblConfig, partial: &PartialAblConfig) {
+fn merge_partial_into(base: &mut AblConfig, partial: &PartialAblConfig, config_path: &Path) {
     if let Some(completion) = &partial.completion
         && let Some(enabled) = completion.enabled
     {
@@ -283,7 +284,8 @@ fn merge_partial_into(base: &mut AblConfig, partial: &PartialAblConfig) {
                 base.diagnostics.unknown_variables.enabled = enabled;
             }
             if let Some(exclude) = &unknown_variables.exclude {
-                base.diagnostics.unknown_variables.exclude = exclude.clone();
+                base.diagnostics.unknown_variables.exclude =
+                    resolve_path_list_relative_to_config(config_path, exclude);
             }
             if let Some(ignore) = &unknown_variables.ignore {
                 base.diagnostics.unknown_variables.ignore = ignore.clone();
@@ -294,7 +296,8 @@ fn merge_partial_into(base: &mut AblConfig, partial: &PartialAblConfig) {
                 base.diagnostics.unknown_functions.enabled = enabled;
             }
             if let Some(exclude) = &unknown_functions.exclude {
-                base.diagnostics.unknown_functions.exclude = exclude.clone();
+                base.diagnostics.unknown_functions.exclude =
+                    resolve_path_list_relative_to_config(config_path, exclude);
             }
             if let Some(ignore) = &unknown_functions.ignore {
                 base.diagnostics.unknown_functions.ignore = ignore.clone();
@@ -309,11 +312,42 @@ fn merge_partial_into(base: &mut AblConfig, partial: &PartialAblConfig) {
     }
 
     if let Some(dumpfile) = &partial.dumpfile {
-        base.dumpfile = dumpfile.clone();
+        base.dumpfile
+            .extend(resolve_path_list_relative_to_config(config_path, dumpfile));
     }
     if let Some(propath) = &partial.propath {
-        base.propath = propath.clone();
+        base.propath
+            .extend(resolve_path_list_relative_to_config(config_path, propath));
     }
+}
+
+fn resolve_path_list_relative_to_config(config_path: &Path, values: &[String]) -> Vec<String> {
+    let base_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
+    values
+        .iter()
+        .map(|value| {
+            let candidate = PathBuf::from(value);
+            let resolved = if candidate.is_absolute() {
+                candidate
+            } else {
+                base_dir.join(candidate)
+            };
+            normalize_path_lexical(resolved)
+                .to_string_lossy()
+                .to_string()
+        })
+        .collect()
+}
+
+fn normalize_path_lexical(path: PathBuf) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        if component == Component::CurDir {
+            continue;
+        }
+        out.push(component.as_os_str());
+    }
+    out
 }
 
 fn deserialize_dumpfile<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
@@ -447,6 +481,7 @@ enabled = false
 enabled = false
 
 [diagnostics.unknown_variables]
+exclude = "./parent-excluded.p"
 ignore = ["PARENT-GLOBAL"]
 "#,
         )
@@ -456,9 +491,11 @@ ignore = ["PARENT-GLOBAL"]
             &child,
             r#"
 inherits = "base.toml"
+dumpfile = ["child.df"]
 propath = ["child/includes"]
 
 [diagnostics.unknown_variables]
+exclude = "./child-excluded.p"
 ignore = ["CHILD-GLOBAL"]
 "#,
         )
@@ -471,8 +508,51 @@ ignore = ["CHILD-GLOBAL"]
             loaded.config.diagnostics.unknown_variables.ignore,
             vec!["CHILD-GLOBAL"]
         );
-        assert_eq!(loaded.config.dumpfile, vec!["parent.df"]);
-        assert_eq!(loaded.config.propath, vec!["child/includes"]);
+        assert_eq!(
+            loaded.config.diagnostics.unknown_variables.exclude,
+            vec![
+                child
+                    .parent()
+                    .expect("child dir")
+                    .join("child-excluded.p")
+                    .to_string_lossy()
+                    .to_string()
+            ]
+        );
+        assert_eq!(
+            loaded.config.dumpfile,
+            vec![
+                parent
+                    .parent()
+                    .expect("parent dir")
+                    .join("parent.df")
+                    .to_string_lossy()
+                    .to_string(),
+                child
+                    .parent()
+                    .expect("child dir")
+                    .join("child.df")
+                    .to_string_lossy()
+                    .to_string(),
+            ]
+        );
+        assert_eq!(
+            loaded.config.propath,
+            vec![
+                parent
+                    .parent()
+                    .expect("parent dir")
+                    .join("parent/includes")
+                    .to_string_lossy()
+                    .to_string(),
+                child
+                    .parent()
+                    .expect("child dir")
+                    .join("child/includes")
+                    .to_string_lossy()
+                    .to_string(),
+            ]
+        );
 
         let _ = std::fs::remove_dir_all(&base_dir);
     }
