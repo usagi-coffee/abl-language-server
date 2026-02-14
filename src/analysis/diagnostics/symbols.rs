@@ -127,6 +127,17 @@ fn collect_identifier_refs_from_expression(
             }
             return;
         }
+        "new_expression" => {
+            if let Some(args) = expr
+                .children(&mut expr.walk())
+                .find(|n| n.kind() == "arguments")
+            {
+                for arg in argument_exprs(args) {
+                    collect_identifier_refs_from_expression(arg, src, out);
+                }
+            }
+            return;
+        }
         _ => {}
     }
 
@@ -376,5 +387,30 @@ mod tests {
         );
 
         assert!(refs.is_empty());
+    }
+
+    #[test]
+    fn ignores_new_expression_type_identifier_for_unknown_variable_refs() {
+        let src = r#"
+DEFINE VARIABLE a AS HANDLE NO-UNDO.
+DEFINE VARIABLE x AS INTEGER NO-UNDO.
+a = NEW JsonArray(x).
+"#;
+
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_abl::LANGUAGE.into())
+            .expect("set abl language");
+        let tree = parser.parse(src, None).expect("parse source");
+
+        let mut refs = Vec::new();
+        collect_identifier_refs_for_unknown_symbol_diag(
+            tree.root_node(),
+            src.as_bytes(),
+            &mut refs,
+        );
+
+        assert!(refs.iter().all(|r| r.name_upper != "JSONARRAY"));
+        assert!(refs.iter().any(|r| r.name_upper == "X"));
     }
 }
