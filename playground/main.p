@@ -67,3 +67,27 @@ local_mul("5", 1).
 lv_counter = local_mul(lv_counter).
 lv_counter = inc_plus(lv_counter, INTEGER(1)).
 lv_counter = inc_minus(lv_counter, ?).
+
+/* Preprocessor define collection/completion/hover/goto-definition. */
+&SCOPED-DEFINE ScopedPlay "scoped-value"
+&GLOBAL-DEFINE GlobalPlay "global-value"
+
+MESSAGE {&ScopedPlay} "{&GlobalPlay}" VIEW-AS ALERT-BOX INFO BUTTONS OK.
+
+/* Include chain defines &GLOBAL-DEFINE ZM_INC and provides include path base. */
+{includes/zmsubdirs.i}
+
+/* Macro + include path concatenation: {{&ZM_INC}zm.i} => includes/zm/zm.i */
+{{&ZM_INC}zm.i}
+
+/* Function is defined in macro-resolved include above (hover/goto/signature/diagnostics). */
+lv_counter = parametr(lv_counter).
+
+/* Include provides temp-table definition with fields (hover/goto on fields). */
+{{&ZM_INC}zm_ceny.i}
+FOR EACH ZM_CENY NO-LOCK USE-INDEX ZM_PRICES:
+  lv_name = ZM_PRICES.
+END.
+
+/* USE-INDEX context should prefer DB index over same-named fields if conflict exists. */
+FIND FIRST z9zw_mstr USE-INDEX z9zw_name NO-LOCK NO-ERROR.

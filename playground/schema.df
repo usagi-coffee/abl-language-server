@@ -13,4 +13,10 @@ ADD FIELD "z9zw_name" OF "z9zw_mstr" AS CHARACTER
 
 ADD INDEX "z9zw_idx" ON "z9zw_mstr"
   UNIQUE
+  INDEX-FIELD "z9zw_id" ASC
+.
+
+ADD INDEX "z9zw_name" ON "z9zw_mstr"
+  INDEX-FIELD "z9zw_name" ASC
+  INDEX-FIELD "z9zw_id" DESC
 .
