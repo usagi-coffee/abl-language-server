@@ -4,8 +4,8 @@ use tower_lsp::lsp_types::*;
 
 use crate::analysis::diagnostics::config::diagnostics_feature_enabled_for_uri;
 use crate::analysis::diagnostics::semantic::{
-    collect_function_call_arity_diags, collect_unknown_symbol_diags, is_latest_version,
-    should_accept_version,
+    UnknownSymbolDiagParams, collect_function_call_arity_diags, collect_unknown_symbol_diags,
+    is_latest_version, should_accept_version,
 };
 use crate::analysis::diagnostics::syntax::collect_ts_error_diags;
 use crate::analysis::diagnostics::types::{
@@ -115,15 +115,17 @@ pub async fn on_change(
     }
     if !collect_unknown_symbol_diags(
         backend,
-        &uri,
-        version,
-        &text,
-        tree.root_node(),
-        include_semantic_diags,
-        unknown_variables_enabled,
-        unknown_functions_enabled,
-        &unknown_variables_ignored,
-        &unknown_functions_ignored,
+        UnknownSymbolDiagParams {
+            uri: &uri,
+            version,
+            text: &text,
+            root: tree.root_node(),
+            include_semantic_diags,
+            unknown_variables_enabled,
+            unknown_functions_enabled,
+            unknown_variables_ignored: &unknown_variables_ignored,
+            unknown_functions_ignored: &unknown_functions_ignored,
+        },
         &mut diags,
     )
     .await
