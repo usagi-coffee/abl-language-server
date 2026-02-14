@@ -2,17 +2,22 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 
 use crate::analysis::buffers::collect_buffer_mappings;
+use crate::analysis::definition::{
+    resolve_include_directive_location, resolve_preprocessor_define_match,
+};
 use crate::analysis::definitions::collect_definition_symbols;
 use crate::analysis::functions::{find_function_signature, find_function_signature_from_includes};
 use crate::analysis::hover::{
     find_db_field_matches, find_local_table_field_hover, function_signature_hover, markdown_hover,
     symbol_at_offset,
 };
+use crate::analysis::includes::collect_include_sites;
 use crate::analysis::schema::normalize_lookup_key;
 use crate::analysis::schema_lookup::has_schema_key;
 use crate::backend::Backend;
 use crate::utils::position::{
     ascii_ident_at_or_before, ascii_ident_or_dash_at_or_before, lsp_pos_to_utf8_byte_offset,
+    preprocessor_name_at_or_before,
 };
 
 impl Backend {
@@ -33,6 +38,53 @@ impl Backend {
             Some(o) => o,
             None => return Ok(None),
         };
+
+        if let Some(location) =
+            resolve_include_directive_location(self, &uri, &text, tree.root_node(), offset).await
+        {
+            let path_display = location
+                .uri
+                .to_file_path()
+                .ok()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| location.uri.to_string());
+            let include_site = collect_include_sites(&text)
+                .into_iter()
+                .find(|site| offset >= site.start_offset && offset <= site.end_offset);
+
+            let mut lines = vec![
+                "**Include File**".to_string(),
+                format!("Path: `{}`", path_display),
+            ];
+
+            if let Some(site) = include_site {
+                let include_text = &text[site.start_offset..site.end_offset];
+                let preprocessor_names = extract_preprocessor_names_from_include_text(include_text);
+                if !preprocessor_names.is_empty() {
+                    lines.push("Preprocessors:".to_string());
+                    for name in preprocessor_names {
+                        if let Some(matched) = resolve_preprocessor_define_match(
+                            self,
+                            &uri,
+                            &text,
+                            tree.root_node(),
+                            &name,
+                            site.start_offset,
+                        )
+                        .await
+                        {
+                            let value = matched.value.unwrap_or_default();
+                            lines.push(format!("- `{}` = `{}`", matched.name, value));
+                        } else {
+                            lines.push(format!("- `{}` = `<unresolved>`", name));
+                        }
+                    }
+                }
+            }
+
+            return Ok(Some(markdown_hover(lines.join("\n\n"))));
+        }
+
         let symbol = match symbol_at_offset(tree.root_node(), &text, offset).or_else(|| {
             ascii_ident_or_dash_at_or_before(&text, offset)
                 .or_else(|| ascii_ident_at_or_before(&text, offset))
@@ -40,6 +92,29 @@ impl Backend {
             Some(s) => s,
             None => return Ok(None),
         };
+
+        if let Some(macro_name) = preprocessor_name_at_or_before(&text, offset)
+            && let Some(matched) = resolve_preprocessor_define_match(
+                self,
+                &uri,
+                &text,
+                tree.root_node(),
+                &macro_name,
+                offset,
+            )
+            .await
+        {
+            let kind = if matched.is_global {
+                "&GLOBAL-DEFINE"
+            } else {
+                "&SCOPED-DEFINE"
+            };
+            let mut markdown = format!("**{}** `{}`", kind, matched.name);
+            if let Some(value) = matched.value {
+                markdown.push_str(&format!("\n\nValue: `{}`", value));
+            }
+            return Ok(Some(markdown_hover(markdown)));
+        }
         let symbol_upper = normalize_lookup_key(&symbol, true);
 
         if let Some(sig) = find_function_signature(tree.root_node(), text.as_bytes(), &symbol) {
@@ -136,4 +211,32 @@ impl Backend {
 
         Ok(None)
     }
+}
+
+fn extract_preprocessor_names_from_include_text(include_text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    let bytes = include_text.as_bytes();
+
+    while i + 2 <= bytes.len() {
+        if i + 2 < bytes.len() && bytes[i] == b'{' && bytes[i + 1] == b'&' {
+            let mut j = i + 2;
+            while j < bytes.len()
+                && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_' || bytes[j] == b'-')
+            {
+                j += 1;
+            }
+            if j < bytes.len() && bytes[j] == b'}' && j > i + 2 {
+                let name = include_text[i + 2..j].to_string();
+                if !out.iter().any(|n: &String| n.eq_ignore_ascii_case(&name)) {
+                    out.push(name);
+                }
+                i = j + 1;
+                continue;
+            }
+        }
+        i += 1;
+    }
+
+    out
 }

@@ -3,7 +3,11 @@ use std::collections::HashSet;
 use tower_lsp::lsp_types::Url;
 use tree_sitter::Node;
 
+use crate::analysis::definitions::{
+    collect_global_preprocessor_define_sites, collect_preprocessor_define_sites,
+};
 use crate::analysis::includes::collect_include_sites;
+use crate::analysis::includes::resolve_include_site_path;
 use crate::analysis::scopes::containing_scope;
 use crate::backend::Backend;
 use crate::utils::ts::direct_child_by_kind;
@@ -189,14 +193,17 @@ pub async fn find_function_signature_from_includes(
     let current_path = uri.to_file_path().ok()?;
 
     let include_sites = collect_include_sites(text);
+    let mut available_define_sites = Vec::new();
+    collect_preprocessor_define_sites(root, text.as_bytes(), &mut available_define_sites);
     let mut seen_files = HashSet::new();
 
     for include in include_sites {
         if include.start_offset < scope.start || include.start_offset > scope.end {
             continue;
         }
+        let include_path_value = resolve_include_site_path(&include, &available_define_sites);
         let Some(include_path) = backend
-            .resolve_include_path_for(&current_path, &include.path)
+            .resolve_include_path_for(&current_path, &include_path_value)
             .await
         else {
             continue;
@@ -213,6 +220,16 @@ pub async fn find_function_signature_from_includes(
             find_function_signature(include_tree.root_node(), include_text.as_bytes(), symbol)
         {
             return Some(sig);
+        }
+        let mut include_global_defines = Vec::new();
+        collect_global_preprocessor_define_sites(
+            include_tree.root_node(),
+            include_text.as_bytes(),
+            &mut include_global_defines,
+        );
+        for mut define in include_global_defines {
+            define.start_byte = include.start_offset;
+            available_define_sites.push(define);
         }
     }
 

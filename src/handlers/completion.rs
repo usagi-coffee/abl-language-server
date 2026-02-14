@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
+use tree_sitter::Node;
 
 use crate::analysis::buffers::collect_buffer_mappings;
 use crate::analysis::completion::{
@@ -13,8 +14,12 @@ use crate::analysis::completion_support::{
     build_field_completion_items, completion_response, is_parameter_symbol_at_byte,
     symbol_is_in_current_scope,
 };
-use crate::analysis::definitions::collect_definition_symbols;
-use crate::analysis::includes::collect_include_sites;
+use crate::analysis::definitions::{
+    collect_definition_symbols, collect_global_preprocessor_define_sites,
+    collect_global_preprocessor_define_symbols, collect_preprocessor_define_sites,
+    collect_preprocessor_define_symbols,
+};
+use crate::analysis::includes::{collect_include_sites, resolve_include_site_path};
 use crate::analysis::local_tables::collect_local_table_definitions;
 use crate::analysis::scopes::containing_scope;
 use crate::backend::Backend;
@@ -152,6 +157,7 @@ impl Backend {
         let current_scope = containing_scope(root, offset);
         let mut symbols = Vec::new();
         collect_definition_symbols(root, text.as_bytes(), &mut symbols);
+        collect_preprocessor_define_symbols(root, text.as_bytes(), &mut symbols);
         candidates.extend(
             symbols
                 .into_iter()
@@ -169,7 +175,13 @@ impl Backend {
                 }),
         );
         let (include_candidates, include_timed_out) = self
-            .collect_symbols_from_includes_for_completion(&uri, &text, offset, include_deadline)
+            .collect_symbols_from_includes_for_completion(
+                &uri,
+                &text,
+                root,
+                offset,
+                include_deadline,
+            )
             .await;
         is_incomplete |= include_timed_out;
         candidates.extend(include_candidates);
@@ -198,7 +210,7 @@ impl Backend {
         let pref_up = prefix.to_ascii_uppercase();
         let items = candidates
             .into_iter()
-            .filter(|s| s.label.to_ascii_uppercase().starts_with(&pref_up))
+            .filter(|s| completion_label_matches_prefix(&s.label, &pref_up))
             .map(|s| CompletionItem {
                 label: s.label.clone(),
                 kind: Some(s.kind),
@@ -216,6 +228,7 @@ impl Backend {
         &self,
         uri: &Url,
         text: &str,
+        root: Node<'_>,
         offset: usize,
         deadline: Instant,
     ) -> (Vec<CompletionCandidate>, bool) {
@@ -228,6 +241,8 @@ impl Backend {
         };
 
         let include_sites = collect_include_sites(text);
+        let mut available_define_sites = Vec::new();
+        collect_preprocessor_define_sites(root, text.as_bytes(), &mut available_define_sites);
         let mut parsed_files = HashSet::new();
         let mut out = Vec::new();
         let mut timed_out = false;
@@ -241,8 +256,9 @@ impl Backend {
                 continue;
             }
 
+            let include_path_value = resolve_include_site_path(&include, &available_define_sites);
             let Some(include_path) = self
-                .resolve_include_path_for(&current_path, &include.path)
+                .resolve_include_path_for(&current_path, &include_path_value)
                 .await
             else {
                 continue;
@@ -255,6 +271,20 @@ impl Backend {
                 self.get_cached_include_completion_candidates(&include_path)
                     .await,
             );
+            if let Some((include_text, include_tree)) =
+                self.get_cached_include_parse(&include_path).await
+            {
+                let mut include_global_defines = Vec::new();
+                collect_global_preprocessor_define_sites(
+                    include_tree.root_node(),
+                    include_text.as_bytes(),
+                    &mut include_global_defines,
+                );
+                for mut define in include_global_defines {
+                    define.start_byte = include.start_offset;
+                    available_define_sites.push(define);
+                }
+            }
         }
 
         (out, timed_out)
@@ -284,6 +314,11 @@ impl Backend {
         let include_root = include_tree.root_node();
         let mut symbols = Vec::new();
         collect_definition_symbols(include_root, include_text_cached.as_bytes(), &mut symbols);
+        collect_global_preprocessor_define_symbols(
+            include_root,
+            include_text_cached.as_bytes(),
+            &mut symbols,
+        );
         let filtered = symbols
             .into_iter()
             .filter(|s| !is_parameter_symbol_at_byte(include_root, s.start_byte))
@@ -308,4 +343,16 @@ impl Backend {
             })
             .collect()
     }
+}
+
+fn completion_label_matches_prefix(label: &str, prefix_upper: &str) -> bool {
+    let label_upper = label.to_ascii_uppercase();
+    if label_upper.starts_with(prefix_upper) {
+        return true;
+    }
+    label
+        .strip_prefix("{&")
+        .and_then(|s| s.strip_suffix('}'))
+        .map(|macro_name| macro_name.to_ascii_uppercase().starts_with(prefix_upper))
+        .unwrap_or(false)
 }

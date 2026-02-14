@@ -125,11 +125,46 @@ pub fn ascii_ident_or_dash_at_or_before(text: &str, mut offset: usize) -> Option
     Some(text[start..end].to_string())
 }
 
+/// Returns preprocessor name when cursor is on `{&NAME}`.
+pub fn preprocessor_name_at_or_before(text: &str, mut offset: usize) -> Option<String> {
+    let bytes = text.as_bytes();
+    if bytes.is_empty() {
+        return None;
+    }
+    if offset > bytes.len() {
+        offset = bytes.len();
+    }
+
+    let is_ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'-';
+    let cursor = if offset < bytes.len() && is_ident(bytes[offset]) {
+        offset
+    } else if offset > 0 && is_ident(bytes[offset - 1]) {
+        offset - 1
+    } else {
+        return None;
+    };
+
+    let mut start = cursor;
+    while start > 0 && is_ident(bytes[start - 1]) {
+        start -= 1;
+    }
+    if start < 2 || bytes[start - 2] != b'{' || bytes[start - 1] != b'&' {
+        return None;
+    }
+
+    let mut end = cursor + 1;
+    while end < bytes.len() && is_ident(bytes[end]) {
+        end += 1;
+    }
+
+    Some(text[start..end].to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         ascii_ident_at_or_before, ascii_ident_or_dash_at_or_before, ascii_ident_prefix,
-        lsp_pos_to_utf8_byte_offset,
+        lsp_pos_to_utf8_byte_offset, preprocessor_name_at_or_before,
     };
     use tower_lsp::lsp_types::Position;
 
@@ -149,5 +184,15 @@ mod tests {
         let text = "abc\nxy";
         let off = lsp_pos_to_utf8_byte_offset(text, Position::new(1, 10)).expect("offset");
         assert_eq!(off, text.len());
+    }
+
+    #[test]
+    fn extracts_preprocessor_name_from_reference() {
+        let text = r#"MESSAGE {&Test-Mode}."#;
+        let off = text.find("Mode").expect("mode offset");
+        assert_eq!(
+            preprocessor_name_at_or_before(text, off).as_deref(),
+            Some("Test-Mode")
+        );
     }
 }

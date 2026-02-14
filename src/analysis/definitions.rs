@@ -16,6 +16,15 @@ pub struct AblDefinitionSite {
     pub start_byte: usize,
 }
 
+#[derive(Clone)]
+pub struct PreprocessorDefineSite {
+    pub label: String,
+    pub value: Option<String>,
+    pub range: Range,
+    pub start_byte: usize,
+    pub is_global: bool,
+}
+
 fn completion_kind_for_node(node_kind: &str) -> Option<(CompletionItemKind, &'static str)> {
     use CompletionItemKind as Kind;
 
@@ -71,6 +80,97 @@ pub fn collect_definition_symbols(node: Node, src: &[u8], out: &mut Vec<AblSymbo
     for i in 0..node.child_count() {
         if let Some(ch) = node.child(i as u32) {
             collect_definition_symbols(ch, src, out);
+        }
+    }
+}
+
+/// Walks the syntax tree and extracts names from preprocessor define directives.
+pub fn collect_preprocessor_define_symbols(node: Node, src: &[u8], out: &mut Vec<AblSymbol>) {
+    collect_preprocessor_define_symbols_internal(node, src, out, true);
+}
+
+pub fn collect_global_preprocessor_define_symbols(
+    node: Node,
+    src: &[u8],
+    out: &mut Vec<AblSymbol>,
+) {
+    collect_preprocessor_define_symbols_internal(node, src, out, false);
+}
+
+pub fn collect_preprocessor_define_sites(
+    node: Node,
+    src: &[u8],
+    out: &mut Vec<PreprocessorDefineSite>,
+) {
+    collect_preprocessor_define_sites_internal(node, src, out, true);
+}
+
+pub fn collect_global_preprocessor_define_sites(
+    node: Node,
+    src: &[u8],
+    out: &mut Vec<PreprocessorDefineSite>,
+) {
+    collect_preprocessor_define_sites_internal(node, src, out, false);
+}
+
+fn collect_preprocessor_define_symbols_internal(
+    node: Node,
+    src: &[u8],
+    out: &mut Vec<AblSymbol>,
+    include_scoped: bool,
+) {
+    let is_global_define = node.kind() == "global_define_preprocessor_directive";
+    let is_scoped_define = node.kind() == "scoped_define_preprocessor_directive";
+
+    if (is_global_define || (include_scoped && is_scoped_define))
+        && let Some(name) = node.child_by_field_name("name")
+        && let Some(raw_name) = node_trimmed_text(name, src)
+    {
+        out.push(AblSymbol {
+            label: format!("{{&{raw_name}}}"),
+            kind: CompletionItemKind::CONSTANT,
+            detail: "ABL preprocessor define".to_string(),
+            start_byte: name.start_byte(),
+        });
+    }
+
+    for i in 0..node.child_count() {
+        if let Some(ch) = node.child(i as u32) {
+            collect_preprocessor_define_symbols_internal(ch, src, out, include_scoped);
+        }
+    }
+}
+
+fn collect_preprocessor_define_sites_internal(
+    node: Node,
+    src: &[u8],
+    out: &mut Vec<PreprocessorDefineSite>,
+    include_scoped: bool,
+) {
+    let is_global_define = node.kind() == "global_define_preprocessor_directive";
+    let is_scoped_define = node.kind() == "scoped_define_preprocessor_directive";
+
+    if (is_global_define || (include_scoped && is_scoped_define))
+        && let Some(name) = node.child_by_field_name("name")
+        && let Some(raw_name) = node_trimmed_text(name, src)
+    {
+        let value = node
+            .child_by_field_name("value")
+            .and_then(|n| n.utf8_text(src).ok())
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
+        out.push(PreprocessorDefineSite {
+            label: raw_name,
+            value,
+            range: node_to_range(name),
+            start_byte: name.start_byte(),
+            is_global: is_global_define,
+        });
+    }
+
+    for i in 0..node.child_count() {
+        if let Some(ch) = node.child(i as u32) {
+            collect_preprocessor_define_sites_internal(ch, src, out, include_scoped);
         }
     }
 }
@@ -158,7 +258,11 @@ fn is_function_definition_node(node_kind: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::collect_definition_symbols;
+    use super::{
+        collect_definition_symbols, collect_global_preprocessor_define_sites,
+        collect_global_preprocessor_define_symbols, collect_preprocessor_define_sites,
+        collect_preprocessor_define_symbols,
+    };
 
     #[test]
     fn collects_function_parameters_as_symbols() {
@@ -179,5 +283,75 @@ END FUNCTION.
 
         assert!(symbols.iter().any(|s| s.label.eq_ignore_ascii_case("p_a")));
         assert!(symbols.iter().any(|s| s.label.eq_ignore_ascii_case("p_b")));
+    }
+
+    #[test]
+    fn collects_preprocessor_define_symbols_for_completion() {
+        let src = r#"
+&SCOPED-DEFINE Test "test"
+&GLOBAL-DEFINE APP_MODE "dev"
+"#;
+
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_abl::LANGUAGE.into())
+            .expect("set abl language");
+        let tree = parser.parse(src, None).expect("parse source");
+
+        let mut symbols = Vec::new();
+        collect_preprocessor_define_symbols(tree.root_node(), src.as_bytes(), &mut symbols);
+
+        assert!(symbols.iter().any(|s| s.label == "{&Test}"));
+        assert!(symbols.iter().any(|s| s.label == "{&APP_MODE}"));
+    }
+
+    #[test]
+    fn collects_only_global_preprocessor_define_symbols_when_requested() {
+        let src = r#"
+&SCOPED-DEFINE Test "test"
+&GLOBAL-DEFINE APP_MODE "dev"
+"#;
+
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_abl::LANGUAGE.into())
+            .expect("set abl language");
+        let tree = parser.parse(src, None).expect("parse source");
+
+        let mut symbols = Vec::new();
+        collect_global_preprocessor_define_symbols(tree.root_node(), src.as_bytes(), &mut symbols);
+
+        assert!(!symbols.iter().any(|s| s.label == "{&Test}"));
+        assert!(symbols.iter().any(|s| s.label == "{&APP_MODE}"));
+    }
+
+    #[test]
+    fn collects_preprocessor_define_sites_with_values() {
+        let src = r#"
+&SCOPED-DEFINE Test "test"
+&GLOBAL-DEFINE APP_MODE "dev"
+"#;
+
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_abl::LANGUAGE.into())
+            .expect("set abl language");
+        let tree = parser.parse(src, None).expect("parse source");
+
+        let mut all_sites = Vec::new();
+        collect_preprocessor_define_sites(tree.root_node(), src.as_bytes(), &mut all_sites);
+        assert!(all_sites.iter().any(|s| s.label == "Test" && !s.is_global));
+        assert!(all_sites.iter().any(|s| s.label == "APP_MODE"
+            && s.is_global
+            && s.value.as_deref() == Some("\"dev\"")));
+
+        let mut global_only = Vec::new();
+        collect_global_preprocessor_define_sites(
+            tree.root_node(),
+            src.as_bytes(),
+            &mut global_only,
+        );
+        assert!(global_only.iter().all(|s| s.is_global));
+        assert!(!global_only.iter().any(|s| s.label == "Test"));
     }
 }
