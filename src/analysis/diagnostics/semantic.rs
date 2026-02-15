@@ -299,3 +299,93 @@ fn globals_visible_at_offset(
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{globals_visible_at_offset, is_latest_version, should_accept_version};
+    use crate::analysis::definitions::PreprocessorDefineSite;
+    use crate::backend::{Backend, BackendState};
+    use dashmap::{DashMap, DashSet};
+    use std::sync::Arc;
+    use tokio::sync::Mutex as AsyncMutex;
+    use tower_lsp::lsp_types::{Position, Range};
+    use tower_lsp::{Client, LspService};
+
+    fn define(label: &str, start_byte: usize, is_global: bool) -> PreprocessorDefineSite {
+        PreprocessorDefineSite {
+            label: label.to_string(),
+            value: Some("v".to_string()),
+            range: Range::new(Position::new(0, 0), Position::new(0, 1)),
+            start_byte,
+            is_global,
+        }
+    }
+
+    #[test]
+    fn keeps_only_global_defines_visible_at_offset_and_resets_start_byte() {
+        let defs = vec![
+            define("A", 5, true),
+            define("B", 10, false),
+            define("C", 20, true),
+        ];
+
+        let visible = globals_visible_at_offset(&defs, 12);
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].label, "A");
+        assert_eq!(visible[0].start_byte, 0);
+    }
+
+    fn test_backend() -> Backend {
+        let (service, _socket) = LspService::build(|client: Client| Backend {
+            client,
+            state: Arc::new(BackendState {
+                abl_language: tree_sitter_abl::LANGUAGE.into(),
+                df_parser: AsyncMutex::new({
+                    let mut p = tree_sitter::Parser::new();
+                    p.set_language(&tree_sitter_df::LANGUAGE.into())
+                        .expect("set df language");
+                    p
+                }),
+                documents: DashMap::new(),
+                workspace_root: AsyncMutex::new(None),
+                config: AsyncMutex::new(crate::config::AblConfig::default()),
+                db_tables: DashSet::new(),
+                db_table_labels: DashMap::new(),
+                db_table_definitions: DashMap::new(),
+                db_field_definitions: DashMap::new(),
+                db_index_definitions: DashMap::new(),
+                db_indexes_by_table: DashMap::new(),
+                db_index_fields_by_table_index: DashMap::new(),
+                db_fields_by_table: DashMap::new(),
+                include_completion_cache: DashMap::new(),
+                include_parse_cache: DashMap::new(),
+            }),
+        })
+        .finish();
+        let backend = service.inner().clone();
+        drop(service);
+        backend
+    }
+
+    #[test]
+    fn accepts_only_non_stale_versions() {
+        let backend = test_backend();
+        let uri = tower_lsp::lsp_types::Url::parse("file:///tmp/doc.p").expect("uri");
+        backend.set_document_text_version(&uri, 3, "MESSAGE x.".to_string(), true);
+
+        assert!(!should_accept_version(&backend, &uri, 2));
+        assert!(should_accept_version(&backend, &uri, 3));
+        assert!(should_accept_version(&backend, &uri, 4));
+    }
+
+    #[test]
+    fn checks_latest_version_exact_match() {
+        let backend = test_backend();
+        let uri = tower_lsp::lsp_types::Url::parse("file:///tmp/doc2.p").expect("uri");
+        backend.set_document_text_version(&uri, 7, "MESSAGE y.".to_string(), true);
+
+        assert!(is_latest_version(&backend, &uri, 7));
+        assert!(!is_latest_version(&backend, &uri, 6));
+        assert!(!is_latest_version(&backend, &uri, 8));
+    }
+}

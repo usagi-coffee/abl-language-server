@@ -38,3 +38,49 @@ fn is_scope_node(kind: &str) -> bool {
             | "destructor_definition"
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::containing_scope;
+
+    #[test]
+    fn returns_function_scope_for_offset_inside_function() {
+        let src = r#"
+FUNCTION foo RETURNS LOGICAL ():
+  DEFINE VARIABLE x AS INTEGER NO-UNDO.
+  x = 1.
+  RETURN TRUE.
+END FUNCTION.
+"#;
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_abl::LANGUAGE.into())
+            .expect("set abl language");
+        let tree = parser.parse(src, None).expect("parse source");
+
+        let offset = src.find("x = 1").expect("inside function offset");
+        let scope = containing_scope(tree.root_node(), offset).expect("scope");
+        assert!(scope.start <= offset);
+        assert!(scope.end >= offset);
+        assert!(scope.end < tree.root_node().end_byte());
+    }
+
+    #[test]
+    fn falls_back_to_root_scope_when_not_inside_named_scope_node() {
+        let src = r#"
+DEFINE VARIABLE y AS INTEGER NO-UNDO.
+y = 2.
+"#;
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_abl::LANGUAGE.into())
+            .expect("set abl language");
+        let tree = parser.parse(src, None).expect("parse source");
+
+        let offset = src.find("y = 2").expect("root statement offset");
+        let scope = containing_scope(tree.root_node(), offset).expect("scope");
+
+        assert_eq!(scope.start, tree.root_node().start_byte());
+        assert_eq!(scope.end, tree.root_node().end_byte());
+    }
+}

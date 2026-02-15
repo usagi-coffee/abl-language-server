@@ -207,7 +207,13 @@ fn is_ident_char(b: u8) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::find_local_table_field_hover_by_symbol;
+    use super::{
+        extract_qualified_field_at_offset, find_db_field_matches, find_local_table_field_hover_by_symbol,
+        symbol_at_offset,
+    };
+    use crate::analysis::parse_abl;
+    use crate::backend::DbFieldInfo;
+    use dashmap::DashMap;
     use tower_lsp::lsp_types::HoverContents;
 
     #[test]
@@ -217,12 +223,7 @@ DEFINE TEMP-TABLE ZM_CENY NO-UNDO
   FIELD ZM_CENY_KOD AS CHARACTER
   FIELD ZM_CENY_START AS DATE.
 "#;
-
-        let mut parser = tree_sitter::Parser::new();
-        parser
-            .set_language(&tree_sitter_abl::LANGUAGE.into())
-            .expect("set abl language");
-        let tree = parser.parse(src, None).expect("parse source");
+        let tree = parse_abl(src);
 
         let hover = find_local_table_field_hover_by_symbol(tree.root_node(), src, "ZM_CENY_KOD")
             .expect("field hover");
@@ -232,5 +233,54 @@ DEFINE TEMP-TABLE ZM_CENY NO-UNDO
         };
         assert!(markup.value.contains("ZM_CENY_KOD"));
         assert!(markup.value.contains("ZM_CENY"));
+    }
+
+    #[test]
+    fn extracts_symbol_and_qualified_field_at_offset() {
+        let src = "DISPLAY ttCustomer.name.";
+        let tree = parse_abl(src);
+        let symbol = symbol_at_offset(
+            tree.root_node(),
+            src,
+            src.find("name").expect("field offset") + 1,
+        )
+        .expect("symbol");
+        assert_eq!(symbol, "name");
+
+        let qualified = extract_qualified_field_at_offset(src, src.find("name").expect("offset"))
+            .expect("qualified");
+        assert_eq!(qualified.0, "TTCUSTOMER");
+        assert_eq!(qualified.1, "NAME");
+        assert_eq!(qualified.2, "name");
+    }
+
+    #[test]
+    fn finds_db_field_matches_across_tables() {
+        let map = DashMap::<String, Vec<DbFieldInfo>>::new();
+        map.insert(
+            "Customer".to_string(),
+            vec![DbFieldInfo {
+                name: "Name".to_string(),
+                field_type: Some("CHARACTER".to_string()),
+                format: None,
+                label: None,
+                description: None,
+            }],
+        );
+        map.insert(
+            "Order".to_string(),
+            vec![DbFieldInfo {
+                name: "name".to_string(),
+                field_type: Some("CHARACTER".to_string()),
+                format: None,
+                label: None,
+                description: None,
+            }],
+        );
+
+        let matches = find_db_field_matches(&map, "NAME");
+        assert_eq!(matches.len(), 2);
+        assert!(matches.iter().any(|m| m.table == "Customer"));
+        assert!(matches.iter().any(|m| m.table == "Order"));
     }
 }

@@ -45,7 +45,8 @@ pub fn point_column_byte_to_utf16(
 
 #[cfg(test)]
 mod tests {
-    use super::{line_start_offsets, point_column_byte_to_utf16};
+    use super::{is_in_range, line_start_offsets, point_column_byte_to_utf16};
+    use tower_lsp::lsp_types::{Position, Range};
 
     #[test]
     fn converts_byte_column_to_utf16_with_non_ascii_prefix() {
@@ -59,5 +60,22 @@ mod tests {
 
         let expected_utf16 = text[..byte_col].encode_utf16().count() as u32;
         assert_eq!(utf16_col, expected_utf16);
+    }
+
+    #[test]
+    fn computes_line_start_offsets_with_and_without_trailing_newline() {
+        assert_eq!(line_start_offsets(""), vec![0]);
+        assert_eq!(line_start_offsets("a\nb"), vec![0, 2]);
+        assert_eq!(line_start_offsets("a\nb\n"), vec![0, 2, 4]);
+    }
+
+    #[test]
+    fn checks_range_overlap_boundaries() {
+        let range = Range::new(Position::new(2, 5), Position::new(2, 10));
+        assert!(is_in_range(2, 5, 1, Some(&range)));
+        assert!(is_in_range(2, 9, 2, Some(&range)));
+        assert!(!is_in_range(2, 0, 5, Some(&range)));
+        assert!(!is_in_range(2, 10, 1, Some(&range)));
+        assert!(is_in_range(0, 0, 1, None));
     }
 }

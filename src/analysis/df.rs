@@ -257,7 +257,8 @@ fn extract_index_field_names(raw: &str) -> Vec<String> {
 mod tests {
     use super::{
         collect_df_field_sites, collect_df_index_sites, collect_df_table_indexes,
-        collect_df_table_names, collect_df_table_sites,
+        collect_df_table_names, collect_df_table_sites, extract_first_quoted,
+        extract_index_field_names, unquote,
     };
     use std::collections::HashSet;
 
@@ -320,5 +321,33 @@ ADD INDEX "z9zw_idx" ON "z9zw_mstr"
             .find(|i| i.index.eq_ignore_ascii_case("Z9ZW_IDX"))
             .expect("index fields");
         assert_eq!(idx.fields, vec!["z9zw_id"]);
+    }
+
+    #[test]
+    fn parses_quoted_helpers() {
+        assert_eq!(unquote(r#""abc""#), Some("abc"));
+        assert_eq!(unquote("'abc'"), Some("abc"));
+        assert_eq!(unquote("abc"), None);
+
+        assert_eq!(
+            extract_first_quoted(r#"FORMAT "x(24)" EXTENT 1"#).as_deref(),
+            Some("x(24)")
+        );
+        assert_eq!(
+            extract_first_quoted("LABEL 'Identifier'").as_deref(),
+            Some("Identifier")
+        );
+        assert_eq!(extract_first_quoted("NO-QUOTES"), None);
+    }
+
+    #[test]
+    fn extracts_index_field_names_from_index_lines_only() {
+        let raw = r#"
+ADD INDEX "idx" ON "tt"
+  INDEX-FIELD "a" ASC
+  UNIQUE
+  INDEX-FIELD "b" DESC
+."#;
+        assert_eq!(extract_index_field_names(raw), vec!["a", "b"]);
     }
 }

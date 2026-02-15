@@ -16,3 +16,12 @@ pub mod scopes;
 pub mod semantic_tokens;
 pub mod signature;
 pub mod types;
+
+#[cfg(test)]
+pub(crate) fn parse_abl(src: &str) -> tree_sitter::Tree {
+    let mut parser = tree_sitter::Parser::new();
+    parser
+        .set_language(&tree_sitter_abl::LANGUAGE.into())
+        .expect("set abl language");
+    parser.parse(src, None).expect("parse source")
+}

@@ -53,7 +53,7 @@ If `cargo` commands fail with crate download errors, the environment has no netw
 ## Required verification sequence (after every code change)
 
 Run in this exact order:
-1. `cargo check`
+1. `cargo test`
 2. `cargo clippy --fix`
 3. `cargo fmt`
 4. `cargo build -r` (manual changes)

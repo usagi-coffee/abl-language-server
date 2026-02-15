@@ -466,3 +466,127 @@ fn pick_best_preprocessor_site<'a>(
     }
     best_before.or(best_after)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        pick_best_preprocessor_site, resolve_buffer_alias_table_location,
+        resolve_local_definition_location,
+    };
+    use crate::analysis::definitions::PreprocessorDefineSite;
+    use crate::analysis::parse_abl;
+    use crate::backend::{Backend, BackendState};
+    use dashmap::{DashMap, DashSet};
+    use std::sync::Arc;
+    use tokio::sync::Mutex as AsyncMutex;
+    use tower_lsp::lsp_types::{Position, Range};
+    use tower_lsp::{Client, LspService};
+
+    fn site(label: &str, start_byte: usize, line: u32) -> PreprocessorDefineSite {
+        PreprocessorDefineSite {
+            label: label.to_string(),
+            value: None,
+            range: Range::new(Position::new(line, 0), Position::new(line, 3)),
+            start_byte,
+            is_global: false,
+        }
+    }
+
+    fn test_backend() -> Backend {
+        let (service, _socket) = LspService::build(|client: Client| Backend {
+            client,
+            state: Arc::new(BackendState {
+                abl_language: tree_sitter_abl::LANGUAGE.into(),
+                df_parser: AsyncMutex::new({
+                    let mut p = tree_sitter::Parser::new();
+                    p.set_language(&tree_sitter_df::LANGUAGE.into())
+                        .expect("set df language");
+                    p
+                }),
+                documents: DashMap::new(),
+                workspace_root: AsyncMutex::new(None),
+                config: AsyncMutex::new(crate::config::AblConfig::default()),
+                db_tables: DashSet::new(),
+                db_table_labels: DashMap::new(),
+                db_table_definitions: DashMap::new(),
+                db_field_definitions: DashMap::new(),
+                db_index_definitions: DashMap::new(),
+                db_indexes_by_table: DashMap::new(),
+                db_index_fields_by_table_index: DashMap::new(),
+                db_fields_by_table: DashMap::new(),
+                include_completion_cache: DashMap::new(),
+                include_parse_cache: DashMap::new(),
+            }),
+        })
+        .finish();
+        let backend = service.inner().clone();
+        drop(service);
+        backend
+    }
+
+    #[test]
+    fn picks_latest_matching_site_before_offset() {
+        let sites = vec![site("X", 5, 1), site("x", 20, 2), site("X", 50, 3)];
+        let (picked, _) = pick_best_preprocessor_site(&sites, "X", 30).expect("site");
+        assert_eq!(picked.start_byte, 20);
+    }
+
+    #[test]
+    fn falls_back_to_earliest_after_when_no_match_before() {
+        let sites = vec![site("X", 40, 4), site("X", 60, 6)];
+        let (picked, _) = pick_best_preprocessor_site(&sites, "x", 30).expect("site");
+        assert_eq!(picked.start_byte, 40);
+    }
+
+    #[test]
+    fn resolves_local_definition_to_nearest_previous_site() {
+        let src = r#"
+DEFINE VARIABLE x AS INTEGER NO-UNDO.
+
+PROCEDURE p:
+  x = 1.
+END PROCEDURE.
+
+DEFINE VARIABLE x AS INTEGER NO-UNDO.
+"#;
+        let tree = parse_abl(src);
+        let uri = tower_lsp::lsp_types::Url::parse("file:///tmp/test.p").expect("uri");
+        let offset = src.find("x = 1").expect("usage");
+
+        let location =
+            resolve_local_definition_location(&uri, tree.root_node(), src.as_bytes(), "x", offset)
+                .expect("location");
+        assert_eq!(location.uri, uri);
+        assert_eq!(location.range.start.line, 1);
+    }
+
+    #[test]
+    fn resolves_buffer_alias_to_local_table_definition() {
+        let src = r#"
+DEFINE TEMP-TABLE ttCustomer NO-UNDO
+  FIELD id AS INTEGER.
+
+DEFINE BUFFER bCust FOR ttCustomer.
+FOR EACH bCust:
+  DISPLAY bCust.id.
+END.
+"#;
+        let tree = parse_abl(src);
+        let backend = test_backend();
+        let uri = tower_lsp::lsp_types::Url::parse("file:///tmp/test.p").expect("uri");
+        let offset = src.find("bCust.id").expect("buffer usage");
+
+        let location = resolve_buffer_alias_table_location(
+            &backend,
+            &uri,
+            tree.root_node(),
+            src.as_bytes(),
+            "BCUST",
+            offset,
+        )
+        .expect("location");
+
+        assert_eq!(location.uri, uri);
+        assert_eq!(location.range.start.line, 1);
+    }
+}

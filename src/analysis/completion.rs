@@ -149,10 +149,13 @@ pub fn field_documentation(field: &DbFieldInfo) -> Option<Documentation> {
 #[cfg(test)]
 mod tests {
     use super::{
-        field_detail, field_documentation, qualifier_before_dot, text_has_dot_before_cursor,
+        field_detail, field_documentation, lookup_case_insensitive_fields,
+        lookup_case_insensitive_indexes_by_table, qualifier_before_dot, text_has_dot_before_cursor,
         use_index_table_symbol_at_offset,
     };
+    use crate::analysis::parse_abl;
     use crate::backend::DbFieldInfo;
+    use dashmap::DashMap;
     use tower_lsp::lsp_types::Documentation;
 
     #[test]
@@ -195,15 +198,41 @@ mod tests {
 FOR EACH Customer USE-INDEX CustNum NO-LOCK:
 END.
 "#;
-        let mut parser = tree_sitter::Parser::new();
-        parser
-            .set_language(&tree_sitter_abl::LANGUAGE.into())
-            .expect("set abl language");
-        let tree = parser.parse(src, None).expect("parse source");
+        let tree = parse_abl(src);
 
         let offset = src.find("CustNum").expect("index usage");
         let table = use_index_table_symbol_at_offset(tree.root_node(), src, offset + 2)
             .expect("table symbol");
         assert_eq!(table, "Customer");
+    }
+
+    #[test]
+    fn looks_up_fields_case_insensitively() {
+        let map = DashMap::<String, Vec<DbFieldInfo>>::new();
+        map.insert(
+            "Customer".to_string(),
+            vec![DbFieldInfo {
+                name: "Name".to_string(),
+                field_type: Some("CHARACTER".to_string()),
+                format: None,
+                label: None,
+                description: None,
+            }],
+        );
+
+        let hit = lookup_case_insensitive_fields(&map, "CUSTOMER").expect("fields");
+        assert_eq!(hit.len(), 1);
+        assert_eq!(hit[0].name, "Name");
+        assert!(lookup_case_insensitive_fields(&map, "ORDER").is_none());
+    }
+
+    #[test]
+    fn looks_up_indexes_case_insensitively() {
+        let map = DashMap::<String, Vec<String>>::new();
+        map.insert("Customer".to_string(), vec!["CustNum".to_string()]);
+
+        let hit = lookup_case_insensitive_indexes_by_table(&map, "customer").expect("indexes");
+        assert_eq!(hit, vec!["CustNum".to_string()]);
+        assert!(lookup_case_insensitive_indexes_by_table(&map, "order").is_none());
     }
 }
