@@ -82,6 +82,7 @@ mod tests {
         build_field_completion_items, completion_response, is_parameter_symbol_at_byte,
         symbol_is_in_current_scope,
     };
+    use crate::analysis::parse_abl;
     use crate::analysis::scopes::containing_scope;
     use crate::backend::DbFieldInfo;
     use tower_lsp::lsp_types::CompletionResponse;
@@ -137,11 +138,7 @@ FUNCTION foo RETURNS LOGICAL (INPUT p1 AS INTEGER):
   RETURN TRUE.
 END FUNCTION.
 "#;
-        let mut parser = tree_sitter::Parser::new();
-        parser
-            .set_language(&tree_sitter_abl::LANGUAGE.into())
-            .expect("set abl language");
-        let tree = parser.parse(src, None).expect("parse source");
+        let tree = parse_abl(src);
 
         let param_offset = src.find("p1 AS").expect("parameter start");
         assert!(is_parameter_symbol_at_byte(tree.root_node(), param_offset));

@@ -153,6 +153,7 @@ fn count_argument_nodes(arguments_node: Node<'_>) -> usize {
 #[cfg(test)]
 mod tests {
     use super::{collect_function_arities, collect_function_calls};
+    use crate::analysis::parse_abl;
     use std::collections::HashMap;
 
     #[test]
@@ -167,11 +168,7 @@ x = foo("a", 1).
 x = foo().
 "#;
 
-        let mut parser = tree_sitter::Parser::new();
-        parser
-            .set_language(&tree_sitter_abl::LANGUAGE.into())
-            .expect("set abl language");
-        let tree = parser.parse(src, None).expect("parse source");
+        let tree = parse_abl(src);
 
         let mut signatures = HashMap::<String, Vec<usize>>::new();
         collect_function_arities(tree.root_node(), src.as_bytes(), &mut signatures);
@@ -199,11 +196,7 @@ DEFINE VARIABLE pzd_linia AS CHARACTER NO-UNDO.
 y = foo(INTEGER(pzd_linia)).
 "#;
 
-        let mut parser = tree_sitter::Parser::new();
-        parser
-            .set_language(&tree_sitter_abl::LANGUAGE.into())
-            .expect("set abl language");
-        let tree = parser.parse(src, None).expect("parse source");
+        let tree = parse_abl(src);
 
         let mut calls = Vec::new();
         collect_function_calls(tree.root_node(), src.as_bytes(), &mut calls);

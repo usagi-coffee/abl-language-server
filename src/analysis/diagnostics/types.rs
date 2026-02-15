@@ -376,6 +376,7 @@ fn argument_exprs(arguments_node: Node<'_>) -> Vec<Node<'_>> {
 #[cfg(test)]
 mod tests {
     use super::{collect_assignment_type_diags, collect_function_call_arg_type_diags};
+    use crate::analysis::parse_abl;
 
     #[test]
     fn reports_assignment_type_mismatches_for_variables_and_function_returns() {
@@ -395,11 +396,7 @@ okc = "abc".
 i = 42.
 "#;
 
-        let mut parser = tree_sitter::Parser::new();
-        parser
-            .set_language(&tree_sitter_abl::LANGUAGE.into())
-            .expect("set abl language");
-        let tree = parser.parse(src, None).expect("parse source");
+        let tree = parse_abl(src);
 
         let mut diags = Vec::new();
         collect_assignment_type_diags(tree.root_node(), src.as_bytes(), &mut diags);
@@ -433,11 +430,7 @@ END FUNCTION.
 local_mul("5", 1).
 "#;
 
-        let mut parser = tree_sitter::Parser::new();
-        parser
-            .set_language(&tree_sitter_abl::LANGUAGE.into())
-            .expect("set abl language");
-        let tree = parser.parse(src, None).expect("parse source");
+        let tree = parse_abl(src);
 
         let mut diags = Vec::new();
         collect_function_call_arg_type_diags(tree.root_node(), src.as_bytes(), &mut diags);

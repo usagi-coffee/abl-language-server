@@ -187,6 +187,7 @@ mod tests {
         collect_include_sites, collect_include_sites_from_tree, resolve_include_site_path,
     };
     use crate::analysis::definitions::PreprocessorDefineSite;
+    use crate::analysis::parse_abl;
     use tower_lsp::lsp_types::{Position, Range};
 
     #[test]
@@ -218,11 +219,7 @@ mod tests {
     #[test]
     fn extracts_include_paths_from_tree_reference_nodes() {
         let src = r#"{ETYK/pz_etyk4pojemnik.i}"#;
-        let mut parser = tree_sitter::Parser::new();
-        parser
-            .set_language(&tree_sitter_abl::LANGUAGE.into())
-            .expect("set abl language");
-        let tree = parser.parse(src, None).expect("parse source");
+        let tree = parse_abl(src);
 
         let sites = collect_include_sites_from_tree(tree.root_node(), src.as_bytes());
         assert_eq!(sites.len(), 1);

@@ -239,6 +239,7 @@ pub async fn find_function_signature_from_includes(
 #[cfg(test)]
 mod tests {
     use super::find_function_signature;
+    use crate::analysis::parse_abl;
 
     #[test]
     fn picks_richest_function_signature_and_renders_params() {
@@ -250,11 +251,7 @@ FUNCTION foo RETURNS LOGICAL (INPUT p1 AS CHARACTER, OUTPUT p2 AS INTEGER):
 END FUNCTION.
 "#;
 
-        let mut parser = tree_sitter::Parser::new();
-        parser
-            .set_language(&tree_sitter_abl::LANGUAGE.into())
-            .expect("set abl language");
-        let tree = parser.parse(src, None).expect("parse source");
+        let tree = parse_abl(src);
 
         let sig = find_function_signature(tree.root_node(), src.as_bytes(), "foo")
             .expect("function signature");

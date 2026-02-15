@@ -122,6 +122,7 @@ fn extract_like_table_upper(node: Node<'_>, src: &[u8]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::collect_local_table_definitions;
+    use crate::analysis::parse_abl;
 
     #[test]
     fn collects_temp_table_and_work_table_fields() {
@@ -134,11 +135,7 @@ DEFINE WORK-TABLE wtCust NO-UNDO
   FIELD custNum AS INTEGER.
 "#;
 
-        let mut parser = tree_sitter::Parser::new();
-        parser
-            .set_language(&tree_sitter_abl::LANGUAGE.into())
-            .expect("set abl language");
-        let tree = parser.parse(src, None).expect("parse source");
+        let tree = parse_abl(src);
 
         let mut defs = Vec::new();
         collect_local_table_definitions(tree.root_node(), src.as_bytes(), &mut defs);
@@ -175,11 +172,7 @@ DEFINE WORK-TABLE wtCust NO-UNDO
 DEFINE TEMP-TABLE ttCustomer LIKE sports.Customer NO-UNDO.
 "#;
 
-        let mut parser = tree_sitter::Parser::new();
-        parser
-            .set_language(&tree_sitter_abl::LANGUAGE.into())
-            .expect("set abl language");
-        let tree = parser.parse(src, None).expect("parse source");
+        let tree = parse_abl(src);
 
         let mut defs = Vec::new();
         collect_local_table_definitions(tree.root_node(), src.as_bytes(), &mut defs);

@@ -55,7 +55,10 @@ mod tests {
     #[test]
     fn checks_schema_key_case_insensitively() {
         let map = DashMap::<String, Vec<Location>>::new();
-        map.insert("Customer".to_string(), vec![loc("file:///tmp/customer.df", 1, 1)]);
+        map.insert(
+            "Customer".to_string(),
+            vec![loc("file:///tmp/customer.df", 1, 1)],
+        );
 
         assert!(has_schema_key(&map, "CUSTOMER"));
         assert!(has_schema_key(&map, "customer"));

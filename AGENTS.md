@@ -54,7 +54,7 @@ If `cargo` commands fail with crate download errors, the environment has no netw
 
 Run in this exact order:
 1. `cargo test`
-2. `cargo clippy --fix`
+2. `cargo clippy --fix --allow-dirty`
 3. `cargo fmt`
 4. `cargo build -r` (manual changes)
 

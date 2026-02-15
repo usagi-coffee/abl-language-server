@@ -38,6 +38,7 @@ pub fn collect_ts_error_diags(node: Node<'_>, out: &mut Vec<Diagnostic>, limit: 
 #[cfg(test)]
 mod tests {
     use super::collect_ts_error_diags;
+    use crate::analysis::parse_abl;
 
     #[test]
     fn collects_syntax_errors_with_limit() {
@@ -46,11 +47,7 @@ FUNCTION bad RETURNS LOGICAL (:
   RETURN TRUE
 END FUNCTION
 "#;
-        let mut parser = tree_sitter::Parser::new();
-        parser
-            .set_language(&tree_sitter_abl::LANGUAGE.into())
-            .expect("set abl language");
-        let tree = parser.parse(src, None).expect("parse source");
+        let tree = parse_abl(src);
 
         let mut out = Vec::new();
         collect_ts_error_diags(tree.root_node(), &mut out, 1);

@@ -254,6 +254,7 @@ mod tests {
         collect_global_preprocessor_define_symbols, collect_local_table_field_sites,
         collect_preprocessor_define_sites, collect_preprocessor_define_symbols,
     };
+    use crate::analysis::parse_abl;
 
     #[test]
     fn collects_function_parameters_as_symbols() {
@@ -263,11 +264,7 @@ FUNCTION local_mul RETURNS INTEGER (INPUT p_a AS INTEGER, INPUT p_b AS INTEGER):
 END FUNCTION.
 "#;
 
-        let mut parser = tree_sitter::Parser::new();
-        parser
-            .set_language(&tree_sitter_abl::LANGUAGE.into())
-            .expect("set abl language");
-        let tree = parser.parse(src, None).expect("parse source");
+        let tree = parse_abl(src);
 
         let mut symbols = Vec::new();
         collect_definition_symbols(tree.root_node(), src.as_bytes(), &mut symbols);
@@ -283,11 +280,7 @@ END FUNCTION.
 &GLOBAL-DEFINE APP_MODE "dev"
 "#;
 
-        let mut parser = tree_sitter::Parser::new();
-        parser
-            .set_language(&tree_sitter_abl::LANGUAGE.into())
-            .expect("set abl language");
-        let tree = parser.parse(src, None).expect("parse source");
+        let tree = parse_abl(src);
 
         let mut symbols = Vec::new();
         collect_preprocessor_define_symbols(tree.root_node(), src.as_bytes(), &mut symbols);
@@ -303,11 +296,7 @@ END FUNCTION.
 &GLOBAL-DEFINE APP_MODE "dev"
 "#;
 
-        let mut parser = tree_sitter::Parser::new();
-        parser
-            .set_language(&tree_sitter_abl::LANGUAGE.into())
-            .expect("set abl language");
-        let tree = parser.parse(src, None).expect("parse source");
+        let tree = parse_abl(src);
 
         let mut symbols = Vec::new();
         collect_global_preprocessor_define_symbols(tree.root_node(), src.as_bytes(), &mut symbols);
@@ -323,11 +312,7 @@ END FUNCTION.
 &GLOBAL-DEFINE APP_MODE "dev"
 "#;
 
-        let mut parser = tree_sitter::Parser::new();
-        parser
-            .set_language(&tree_sitter_abl::LANGUAGE.into())
-            .expect("set abl language");
-        let tree = parser.parse(src, None).expect("parse source");
+        let tree = parse_abl(src);
 
         let mut all_sites = Vec::new();
         collect_preprocessor_define_sites(tree.root_node(), src.as_bytes(), &mut all_sites);
@@ -354,11 +339,7 @@ DEFINE TEMP-TABLE ttCustomer NO-UNDO
   FIELD custName AS CHARACTER.
 "#;
 
-        let mut parser = tree_sitter::Parser::new();
-        parser
-            .set_language(&tree_sitter_abl::LANGUAGE.into())
-            .expect("set abl language");
-        let tree = parser.parse(src, None).expect("parse source");
+        let tree = parse_abl(src);
 
         let mut sites = Vec::new();
         collect_local_table_field_sites(tree.root_node(), src.as_bytes(), &mut sites);

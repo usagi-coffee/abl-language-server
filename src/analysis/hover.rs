@@ -208,8 +208,8 @@ fn is_ident_char(b: u8) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        extract_qualified_field_at_offset, find_db_field_matches, find_local_table_field_hover_by_symbol,
-        symbol_at_offset,
+        extract_qualified_field_at_offset, find_db_field_matches,
+        find_local_table_field_hover_by_symbol, symbol_at_offset,
     };
     use crate::analysis::parse_abl;
     use crate::backend::DbFieldInfo;

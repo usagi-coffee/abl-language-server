@@ -42,6 +42,7 @@ fn is_scope_node(kind: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::containing_scope;
+    use crate::analysis::parse_abl;
 
     #[test]
     fn returns_function_scope_for_offset_inside_function() {
@@ -52,11 +53,7 @@ FUNCTION foo RETURNS LOGICAL ():
   RETURN TRUE.
 END FUNCTION.
 "#;
-        let mut parser = tree_sitter::Parser::new();
-        parser
-            .set_language(&tree_sitter_abl::LANGUAGE.into())
-            .expect("set abl language");
-        let tree = parser.parse(src, None).expect("parse source");
+        let tree = parse_abl(src);
 
         let offset = src.find("x = 1").expect("inside function offset");
         let scope = containing_scope(tree.root_node(), offset).expect("scope");
@@ -71,11 +68,7 @@ END FUNCTION.
 DEFINE VARIABLE y AS INTEGER NO-UNDO.
 y = 2.
 "#;
-        let mut parser = tree_sitter::Parser::new();
-        parser
-            .set_language(&tree_sitter_abl::LANGUAGE.into())
-            .expect("set abl language");
-        let tree = parser.parse(src, None).expect("parse source");
+        let tree = parse_abl(src);
 
         let offset = src.find("y = 2").expect("root statement offset");
         let scope = containing_scope(tree.root_node(), offset).expect("scope");

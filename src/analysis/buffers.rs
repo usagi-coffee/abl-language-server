@@ -44,6 +44,7 @@ fn normalize_table_name(raw: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::collect_buffer_mappings;
+    use crate::analysis::parse_abl;
 
     #[test]
     fn collects_buffer_alias_and_table_name() {
@@ -52,11 +53,7 @@ DEFINE BUFFER f-lpd_det FOR lpd_det.
 DEFINE BUFFER b-pt FOR sports.pt_mstr.
 "#;
 
-        let mut parser = tree_sitter::Parser::new();
-        parser
-            .set_language(&tree_sitter_abl::LANGUAGE.into())
-            .expect("set abl language");
-        let tree = parser.parse(src, None).expect("parse source");
+        let tree = parse_abl(src);
 
         let mut out = Vec::new();
         collect_buffer_mappings(tree.root_node(), src.as_bytes(), &mut out);

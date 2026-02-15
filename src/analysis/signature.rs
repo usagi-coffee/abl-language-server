@@ -195,13 +195,10 @@ fn count_active_argument_index(
 mod tests {
     use super::{call_context_at_offset, count_active_argument_index};
     use crate::analysis::functions::find_function_signature;
+    use crate::analysis::parse_abl;
 
     fn parse(src: &str) -> tree_sitter::Tree {
-        let mut parser = tree_sitter::Parser::new();
-        parser
-            .set_language(&tree_sitter_abl::LANGUAGE.into())
-            .expect("set abl language");
-        parser.parse(src, None).expect("parse source")
+        parse_abl(src)
     }
 
     #[test]

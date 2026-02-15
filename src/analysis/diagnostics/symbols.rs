@@ -379,16 +379,13 @@ pub fn append_unknown_symbol_diags(inputs: UnknownSymbolDiagInputs<'_>, out: &mu
 #[cfg(test)]
 mod tests {
     use super::collect_identifier_refs_for_unknown_symbol_diag;
+    use crate::analysis::parse_abl;
 
     #[test]
     fn ignores_preprocessor_references_for_unknown_variable_refs() {
         let src = "OUTPUT TO VALUE({&OUT}) {&OUTPUT-ARGS}.";
 
-        let mut parser = tree_sitter::Parser::new();
-        parser
-            .set_language(&tree_sitter_abl::LANGUAGE.into())
-            .expect("set abl language");
-        let tree = parser.parse(src, None).expect("parse source");
+        let tree = parse_abl(src);
 
         let mut refs = Vec::new();
         collect_identifier_refs_for_unknown_symbol_diag(
@@ -408,11 +405,7 @@ DEFINE VARIABLE x AS INTEGER NO-UNDO.
 a = NEW JsonArray(x).
 "#;
 
-        let mut parser = tree_sitter::Parser::new();
-        parser
-            .set_language(&tree_sitter_abl::LANGUAGE.into())
-            .expect("set abl language");
-        let tree = parser.parse(src, None).expect("parse source");
+        let tree = parse_abl(src);
 
         let mut refs = Vec::new();
         collect_identifier_refs_for_unknown_symbol_diag(
@@ -431,11 +424,7 @@ a = NEW JsonArray(x).
 {{&US_BBI}gprun.i ""zmzlec2got.p"" "(input zlec,zlec)"}.
 "#;
 
-        let mut parser = tree_sitter::Parser::new();
-        parser
-            .set_language(&tree_sitter_abl::LANGUAGE.into())
-            .expect("set abl language");
-        let tree = parser.parse(src, None).expect("parse source");
+        let tree = parse_abl(src);
 
         let mut refs = Vec::new();
         collect_identifier_refs_for_unknown_symbol_diag(

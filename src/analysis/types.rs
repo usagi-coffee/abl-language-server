@@ -47,8 +47,14 @@ mod tests {
         assert_eq!(builtin_type_from_name("char"), Some(BasicType::Character));
         assert_eq!(builtin_type_from_name("int64"), Some(BasicType::Numeric));
         assert_eq!(builtin_type_from_name("boolean"), Some(BasicType::Logical));
-        assert_eq!(builtin_type_from_name("datetime-tz"), Some(BasicType::DateLike));
-        assert_eq!(builtin_type_from_name("widget-handle"), Some(BasicType::Handle));
+        assert_eq!(
+            builtin_type_from_name("datetime-tz"),
+            Some(BasicType::DateLike)
+        );
+        assert_eq!(
+            builtin_type_from_name("widget-handle"),
+            Some(BasicType::Handle)
+        );
     }
 
     #[test]
