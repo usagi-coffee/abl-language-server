@@ -90,4 +90,4 @@ FOR EACH ZM_CENY NO-LOCK USE-INDEX ZM_PRICES:
 END.
 
 /* USE-INDEX context should prefer DB index over same-named fields if conflict exists. */
-FIND FIRST z9zw_mstr USE-INDEX z9zw_name NO-LOCK NO-ERROR.
+FIND FIRST z9zw_mstr USE-INDEX z9zw_idx NO-LOCK NO-ERROR.

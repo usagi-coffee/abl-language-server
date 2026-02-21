@@ -8,7 +8,8 @@ use tree_sitter::Node;
 
 use crate::analysis::buffers::collect_buffer_mappings;
 use crate::analysis::completion::{
-    lookup_case_insensitive_fields, lookup_case_insensitive_indexes_by_table, qualifier_before_dot,
+    lookup_case_insensitive_fields_by_table_symbol,
+    lookup_case_insensitive_indexes_by_table_symbol, qualifier_before_dot,
     text_has_dot_before_cursor, use_index_table_symbol_at_offset,
 };
 use crate::analysis::completion_support::{
@@ -77,8 +78,11 @@ impl Backend {
 
         if let Some(use_index_symbol) = use_index_table_symbol_at_offset(root, &text, offset) {
             let mut table_key = use_index_symbol.to_ascii_uppercase();
-            if lookup_case_insensitive_indexes_by_table(&self.db_indexes_by_table, &table_key)
-                .is_none()
+            if lookup_case_insensitive_indexes_by_table_symbol(
+                &self.db_indexes_by_table,
+                &table_key,
+            )
+            .is_none()
             {
                 let mut mappings = Vec::new();
                 collect_buffer_mappings(root, text.as_bytes(), &mut mappings);
@@ -112,20 +116,22 @@ impl Backend {
             }
 
             let pref_up = prefix.to_ascii_uppercase();
-            let items =
-                lookup_case_insensitive_indexes_by_table(&self.db_indexes_by_table, &table_key)
-                    .unwrap_or_default()
-                    .into_iter()
-                    .filter(|index| index.to_ascii_uppercase().starts_with(&pref_up))
-                    .map(|index| CompletionItem {
-                        label: index.clone(),
-                        kind: Some(CompletionItemKind::REFERENCE),
-                        detail: Some(format!("DB index ({table_key})")),
-                        insert_text: Some(index),
-                        insert_text_format: Some(InsertTextFormat::PLAIN_TEXT),
-                        ..Default::default()
-                    })
-                    .collect::<Vec<_>>();
+            let items = lookup_case_insensitive_indexes_by_table_symbol(
+                &self.db_indexes_by_table,
+                &table_key,
+            )
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|index| index.to_ascii_uppercase().starts_with(&pref_up))
+            .map(|index| CompletionItem {
+                label: index.clone(),
+                kind: Some(CompletionItemKind::REFERENCE),
+                detail: Some(format!("DB index ({table_key})")),
+                insert_text: Some(index),
+                insert_text_format: Some(InsertTextFormat::PLAIN_TEXT),
+                ..Default::default()
+            })
+            .collect::<Vec<_>>();
             return Ok(Some(completion_response(items, is_incomplete)));
         }
 
@@ -189,14 +195,19 @@ impl Backend {
                 }
 
                 if let Some(like_key) = local_like_by_table.get(&table_key)
-                    && let Some(fields) =
-                        lookup_case_insensitive_fields(&self.db_fields_by_table, like_key)
+                    && let Some(fields) = lookup_case_insensitive_fields_by_table_symbol(
+                        &self.db_fields_by_table,
+                        like_key,
+                    )
                 {
                     let items = build_field_completion_items(&fields, &table_key, &field_prefix);
                     return Ok(Some(completion_response(items, is_incomplete)));
                 }
 
-                let fields = lookup_case_insensitive_fields(&self.db_fields_by_table, &table_key);
+                let fields = lookup_case_insensitive_fields_by_table_symbol(
+                    &self.db_fields_by_table,
+                    &table_key,
+                );
                 if let Some(fields) = fields {
                     let items = build_field_completion_items(&fields, &table_key, &field_prefix);
                     return Ok(Some(completion_response(items, is_incomplete)));

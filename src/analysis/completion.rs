@@ -53,6 +53,22 @@ pub fn lookup_case_insensitive_fields(
         })
 }
 
+pub fn lookup_case_insensitive_fields_by_table_symbol(
+    map: &dashmap::DashMap<String, Vec<DbFieldInfo>>,
+    key: &str,
+) -> Option<Vec<DbFieldInfo>> {
+    lookup_case_insensitive_fields(map, key).or_else(|| {
+        let key_tail = unqualified_table_name(key);
+        map.iter().find_map(|entry| {
+            if unqualified_table_name(entry.key()).eq_ignore_ascii_case(key_tail) {
+                Some(entry.value().clone())
+            } else {
+                None
+            }
+        })
+    })
+}
+
 pub fn lookup_case_insensitive_indexes_by_table(
     map: &dashmap::DashMap<String, Vec<String>>,
     key: &str,
@@ -68,6 +84,26 @@ pub fn lookup_case_insensitive_indexes_by_table(
                 }
             })
         })
+}
+
+pub fn lookup_case_insensitive_indexes_by_table_symbol(
+    map: &dashmap::DashMap<String, Vec<String>>,
+    key: &str,
+) -> Option<Vec<String>> {
+    lookup_case_insensitive_indexes_by_table(map, key).or_else(|| {
+        let key_tail = unqualified_table_name(key);
+        map.iter().find_map(|entry| {
+            if unqualified_table_name(entry.key()).eq_ignore_ascii_case(key_tail) {
+                Some(entry.value().clone())
+            } else {
+                None
+            }
+        })
+    })
+}
+
+fn unqualified_table_name(name: &str) -> &str {
+    name.trim().rsplit('.').next().unwrap_or_default().trim()
 }
 
 pub fn use_index_table_symbol_at_offset(
@@ -150,8 +186,9 @@ pub fn field_documentation(field: &DbFieldInfo) -> Option<Documentation> {
 mod tests {
     use super::{
         field_detail, field_documentation, lookup_case_insensitive_fields,
-        lookup_case_insensitive_indexes_by_table, qualifier_before_dot, text_has_dot_before_cursor,
-        use_index_table_symbol_at_offset,
+        lookup_case_insensitive_fields_by_table_symbol, lookup_case_insensitive_indexes_by_table,
+        lookup_case_insensitive_indexes_by_table_symbol, qualifier_before_dot,
+        text_has_dot_before_cursor, use_index_table_symbol_at_offset,
     };
     use crate::analysis::parse_abl;
     use crate::backend::DbFieldInfo;
@@ -234,5 +271,34 @@ END.
         let hit = lookup_case_insensitive_indexes_by_table(&map, "customer").expect("indexes");
         assert_eq!(hit, vec!["CustNum".to_string()]);
         assert!(lookup_case_insensitive_indexes_by_table(&map, "order").is_none());
+    }
+
+    #[test]
+    fn looks_up_fields_by_unqualified_table_name() {
+        let map = DashMap::<String, Vec<DbFieldInfo>>::new();
+        map.insert(
+            "sports.Customer".to_string(),
+            vec![DbFieldInfo {
+                name: "Name".to_string(),
+                field_type: Some("CHARACTER".to_string()),
+                format: None,
+                label: None,
+                description: None,
+            }],
+        );
+
+        let hit = lookup_case_insensitive_fields_by_table_symbol(&map, "customer").expect("fields");
+        assert_eq!(hit.len(), 1);
+        assert_eq!(hit[0].name, "Name");
+    }
+
+    #[test]
+    fn looks_up_indexes_by_unqualified_table_name() {
+        let map = DashMap::<String, Vec<String>>::new();
+        map.insert("sports.Customer".to_string(), vec!["CustNum".to_string()]);
+
+        let hit = lookup_case_insensitive_indexes_by_table_symbol(&map, "customer")
+            .expect("indexes by table symbol");
+        assert_eq!(hit, vec!["CustNum".to_string()]);
     }
 }
