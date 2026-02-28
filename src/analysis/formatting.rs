@@ -141,9 +141,7 @@ fn continuation_range(node: Node<'_>) -> Option<(usize, usize)> {
             } else {
                 first_named_child_of_kind(node, "body")
             };
-            let Some(anchor) = body_or_then else {
-                return None;
-            };
+            let anchor = body_or_then?;
             let anchor_row = anchor.start_position().row;
             let anchor_col = anchor.start_position().column;
             let upper = if anchor_col == 0 {
