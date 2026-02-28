@@ -226,8 +226,8 @@ impl LanguageServer for Backend {
         Ok(None)
     }
 
-    async fn formatting(&self, _params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
-        Ok(None)
+    async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
+        self.handle_formatting(params).await
     }
 
     async fn did_change_configuration(&self, _: DidChangeConfigurationParams) {

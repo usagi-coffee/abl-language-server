@@ -6,6 +6,7 @@ pub mod definition;
 pub mod definitions;
 pub mod df;
 pub mod diagnostics;
+pub mod formatting;
 pub mod functions;
 pub mod hover;
 pub mod includes;

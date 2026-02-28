@@ -10,6 +10,7 @@ use tower_lsp::lsp_types::InitializeParams;
 pub struct AblConfig {
     pub completion: CompletionConfig,
     pub diagnostics: DiagnosticsConfig,
+    pub formatting: FormattingConfig,
     pub semantic_tokens: SemanticTokensConfig,
     #[serde(default, deserialize_with = "deserialize_dumpfile")]
     pub dumpfile: Vec<String>,
@@ -63,6 +64,26 @@ impl Default for DiagnosticFeatureConfig {
             enabled: true,
             exclude: Vec::new(),
             ignore: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct FormattingConfig {
+    pub enabled: bool,
+    pub indent_size: usize,
+    pub use_tabs: bool,
+    pub idempotence: bool,
+}
+
+impl Default for FormattingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            indent_size: 2,
+            use_tabs: false,
+            idempotence: true,
         }
     }
 }
@@ -141,6 +162,7 @@ struct PartialAblConfig {
     inherits: Option<Vec<String>>,
     completion: Option<PartialCompletionConfig>,
     diagnostics: Option<PartialDiagnosticsConfig>,
+    formatting: Option<PartialFormattingConfig>,
     semantic_tokens: Option<PartialSemanticTokensConfig>,
     #[serde(default, deserialize_with = "deserialize_optional_string_or_vec")]
     dumpfile: Option<Vec<String>>,
@@ -170,6 +192,15 @@ struct PartialDiagnosticFeatureConfig {
     exclude: Option<Vec<String>>,
     #[serde(default, deserialize_with = "deserialize_optional_string_or_vec")]
     ignore: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+struct PartialFormattingConfig {
+    enabled: Option<bool>,
+    indent_size: Option<usize>,
+    use_tabs: Option<bool>,
+    idempotence: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -302,6 +333,21 @@ fn merge_partial_into(base: &mut AblConfig, partial: &PartialAblConfig, config_p
             if let Some(ignore) = &unknown_functions.ignore {
                 base.diagnostics.unknown_functions.ignore = ignore.clone();
             }
+        }
+    }
+
+    if let Some(formatting) = &partial.formatting {
+        if let Some(enabled) = formatting.enabled {
+            base.formatting.enabled = enabled;
+        }
+        if let Some(indent_size) = formatting.indent_size {
+            base.formatting.indent_size = indent_size;
+        }
+        if let Some(use_tabs) = formatting.use_tabs {
+            base.formatting.use_tabs = use_tabs;
+        }
+        if let Some(idempotence) = formatting.idempotence {
+            base.formatting.idempotence = idempotence;
         }
     }
 
@@ -440,6 +486,25 @@ propath = ["/global/a", "relative/includes"]
 
         assert_eq!(cfg.dumpfile, vec!["a.df", "b.df"]);
         assert_eq!(cfg.propath, vec!["/global/a", "relative/includes"]);
+    }
+
+    #[test]
+    fn parses_formatting_settings() {
+        let cfg: AblConfig = toml::from_str(
+            r#"
+[formatting]
+enabled = true
+indent_size = 4
+use_tabs = false
+idempotence = false
+"#,
+        )
+        .expect("parse config");
+
+        assert!(cfg.formatting.enabled);
+        assert_eq!(cfg.formatting.indent_size, 4);
+        assert!(!cfg.formatting.use_tabs);
+        assert!(!cfg.formatting.idempotence);
     }
 
     #[test]
