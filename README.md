@@ -2,7 +2,7 @@
 
 Language Server Protocol (LSP) implementation for ABL (OpenEdge Advanced Business Language), supports parser-based language features for ABL and optional DB schema integration via `.df` dump files.
 
-The language server currently does not touch your files, it's strictly read-only, there should be no risk of file corruption.
+The language server supports optional document formatting (auto-indent only). Formatting is disabled by default.
 
 ## Extensions
 
@@ -29,6 +29,7 @@ The language server currently does not touch your files, it's strictly read-only
 | Hover: functions                      | Signature with parameters + return type, include-aware                                                        |
 | Hover: DB schema                      | Table / field / index; field metadata includes type/label/format/description                                  |
 | Semantic tokens                       | Highlights DB table identifiers (`token type: type`)                                                          |
+| Formatting (auto-indent)              | Parser-aware indentation only; guarded by AST-shape check and optional idempotence check                      |
 
 ## Configuration (`abl.toml`)
 
@@ -67,6 +68,12 @@ ignore = ["abs", "round", "my_dynamic_fn"]
 
 [semantic_tokens]
 enabled = true
+
+[formatting]
+enabled = false
+indent_size = 2
+use_tabs = false
+idempotence = true
 ```
 
 ### Option reference
@@ -83,6 +90,10 @@ enabled = true
 | `diagnostics.unknown_functions.exclude`  | `string \| string[]` | `[]`    | File/path patterns where unknown-function diagnostics are skipped; relative patterns resolve from the config file that defines them |
 | `diagnostics.unknown_functions.ignore`   | `string \| string[]` | `[]`    | Function names ignored by unknown-function diagnostics (case-insensitive)             |
 | `semantic_tokens.enabled` | `bool`               | `true`  | Enables semantic token responses (DB table identifier highlighting)                   |
+| `formatting.enabled`      | `bool`               | `false` | Enables/disables `textDocument/formatting` response                                    |
+| `formatting.indent_size`  | `usize`              | `2`     | Spaces per indent level for formatter fallback/default behavior                        |
+| `formatting.use_tabs`      | `bool`               | `false` | Prefer tabs for indentation (LSP editor options may override per request)             |
+| `formatting.idempotence`   | `bool`               | `true`  | Runs second-pass formatting equality check before applying edits                       |
 | `dumpfile`                | `string \| string[]` | `[]`    | Path(s) to `.df` dump files; relative paths resolve from the config file that defines them |
 | `propath`                 | `string \| string[]` | `[]`    | Include search roots for `{...}` includes; relative paths resolve from the config file that defines them |
 
