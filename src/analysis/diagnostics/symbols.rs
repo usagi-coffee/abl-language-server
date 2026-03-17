@@ -452,7 +452,7 @@ a = NEW JsonArray(x).
             range: Range::default(),
         }];
         let db_tables = DashSet::new();
-        let mut db_sequences = DashSet::new();
+        let db_sequences = DashSet::new();
         db_sequences.insert("USERS_SEQ".to_string());
         let mut diags = Vec::new();
 

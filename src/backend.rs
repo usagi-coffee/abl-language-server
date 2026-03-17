@@ -344,25 +344,6 @@ impl Backend {
         Some(parsed)
     }
 
-    pub fn get_document_tree_prefer_cached_with_freshness(
-        &self,
-        uri: &Url,
-    ) -> Option<(Tree, bool)> {
-        let mut doc = self.documents.get_mut(uri)?;
-        if let Some(tree) = &doc.tree {
-            let is_stale = doc.tree_version != doc.version;
-            return Some((tree.clone(), is_stale));
-        }
-        let text = doc.text.clone();
-        let parsed = {
-            let mut parser = doc.parser.lock().expect("ABL parser mutex poisoned");
-            parser.parse(text.as_str(), None)?
-        };
-        doc.tree = Some(parsed.clone());
-        doc.tree_version = doc.version;
-        Some((parsed, false))
-    }
-
     pub fn set_document_tree_if_version(&self, uri: &Url, version: i32, tree: Tree) {
         if let Some(mut doc) = self.documents.get_mut(uri)
             && doc.version == version
