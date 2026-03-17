@@ -58,14 +58,13 @@ impl Backend {
             Some(t) => t,
             None => return Ok(Some(CompletionResponse::Array(vec![]))),
         };
-        // Completion should remain responsive while typing; prefer cached tree
-        // rather than blocking on reparse for every document version.
-        let (tree, tree_is_stale) = match self.get_document_tree_prefer_cached_with_freshness(&uri)
-        {
+        // Completion must use a tree parsed from the current text. A stale tree can panic
+        // when tree-sitter slices node byte ranges against newer document contents.
+        let tree = match self.get_document_tree_or_parse(&uri) {
             Some(t) => t,
             None => return Ok(Some(CompletionResponse::Array(vec![]))),
         };
-        let mut is_incomplete = tree_is_stale;
+        let mut is_incomplete = false;
         let include_deadline = Instant::now() + Duration::from_millis(COMPLETION_INCLUDE_BUDGET_MS);
 
         let offset = match lsp_pos_to_utf8_byte_offset(&text, pos) {
