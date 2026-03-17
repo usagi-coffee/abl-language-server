@@ -63,8 +63,9 @@ impl Backend {
                 format!("Path: `{}`", path_display),
             ];
 
-            if let Some(site) = include_site {
-                let include_text = &text[site.start_offset..site.end_offset];
+            if let Some(site) = include_site
+                && let Some(include_text) = text.get(site.start_offset..site.end_offset)
+            {
                 let preprocessor_names = extract_preprocessor_names_from_include_text(include_text);
                 if !preprocessor_names.is_empty() {
                     lines.push("Preprocessors:".to_string());
