@@ -234,6 +234,13 @@ impl Backend {
             return Ok(Some(markdown_hover(format!("**DB Table** `{}`", symbol))));
         }
 
+        if has_schema_key(&self.db_sequence_definitions, &symbol_upper) {
+            return Ok(Some(markdown_hover(format!(
+                "**DB Sequence** `{}`",
+                symbol
+            ))));
+        }
+
         if let Some(local_field_hover) =
             find_local_table_field_hover(tree.root_node(), &text, offset)
         {

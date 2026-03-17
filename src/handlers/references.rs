@@ -31,6 +31,11 @@ impl Backend {
             .db_table_definitions
             .get(&symbol)
             .map(|entry| entry.value().clone())
+            .or_else(|| {
+                self.db_sequence_definitions
+                    .get(&symbol)
+                    .map(|entry| entry.value().clone())
+            })
             .unwrap_or_default();
         if locations.is_empty() {
             Ok(None)

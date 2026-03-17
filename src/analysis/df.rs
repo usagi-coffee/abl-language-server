@@ -142,6 +142,11 @@ pub struct DfIndexSite {
     pub range: Range,
 }
 
+pub struct DfSequenceSite {
+    pub name: String,
+    pub range: Range,
+}
+
 /// Collects index definition sites from parsed DF source.
 pub fn collect_df_index_sites(node: Node, src: &[u8], out: &mut Vec<DfIndexSite>) {
     if node.kind() == "add_index_statement"
@@ -158,6 +163,26 @@ pub fn collect_df_index_sites(node: Node, src: &[u8], out: &mut Vec<DfIndexSite>
     for i in 0..node.child_count() {
         if let Some(ch) = node.child(i as u32) {
             collect_df_index_sites(ch, src, out);
+        }
+    }
+}
+
+/// Collects sequence definition sites from parsed DF source.
+pub fn collect_df_sequence_sites(node: Node, src: &[u8], out: &mut Vec<DfSequenceSite>) {
+    if node.kind() == "add_sequence_statement"
+        && let Some(sequence_node) = node.child_by_field_name("sequence")
+        && let Ok(raw) = sequence_node.utf8_text(src)
+        && let Some(name) = unquote(raw)
+    {
+        out.push(DfSequenceSite {
+            name: name.to_string(),
+            range: node_to_range(sequence_node),
+        });
+    }
+
+    for i in 0..node.child_count() {
+        if let Some(ch) = node.child(i as u32) {
+            collect_df_sequence_sites(ch, src, out);
         }
     }
 }
@@ -256,9 +281,9 @@ fn extract_index_field_names(raw: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        collect_df_field_sites, collect_df_index_sites, collect_df_table_indexes,
-        collect_df_table_names, collect_df_table_sites, extract_first_quoted,
-        extract_index_field_names, unquote,
+        collect_df_field_sites, collect_df_index_sites, collect_df_sequence_sites,
+        collect_df_table_indexes, collect_df_table_names, collect_df_table_sites,
+        extract_first_quoted, extract_index_field_names, unquote,
     };
     use std::collections::HashSet;
 
@@ -267,6 +292,9 @@ mod tests {
         let src = r#"
 ADD TABLE "z9zw_mstr"
   AREA "Schema Area"
+.
+ADD SEQUENCE "z9zw_seq"
+  INITIAL 0
 .
 ADD FIELD "z9zw_id" OF "z9zw_mstr" AS character
   FORMAT "x(24)"
@@ -309,6 +337,14 @@ ADD INDEX "z9zw_idx" ON "z9zw_mstr"
             index_sites
                 .iter()
                 .any(|s| s.name.eq_ignore_ascii_case("Z9ZW_IDX"))
+        );
+
+        let mut sequence_sites = Vec::new();
+        collect_df_sequence_sites(tree.root_node(), src.as_bytes(), &mut sequence_sites);
+        assert!(
+            sequence_sites
+                .iter()
+                .any(|s| s.name.eq_ignore_ascii_case("Z9ZW_SEQ"))
         );
 
         let mut table_indexes = Vec::new();

@@ -118,6 +118,11 @@ impl Backend {
             return Ok(Some(GotoDefinitionResponse::Scalar(location)));
         }
 
+        if let Some(location) = lookup_schema_location(&self.db_sequence_definitions, &symbol_upper)
+        {
+            return Ok(Some(GotoDefinitionResponse::Scalar(location)));
+        }
+
         if let Some(location) = lookup_schema_location(&self.db_field_definitions, &symbol_upper) {
             return Ok(Some(GotoDefinitionResponse::Scalar(location)));
         }

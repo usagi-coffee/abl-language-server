@@ -326,6 +326,7 @@ pub struct UnknownSymbolDiagInputs<'a> {
     pub unknown_variables_ignored: &'a HashSet<String>,
     pub unknown_functions_ignored: &'a HashSet<String>,
     pub db_tables: &'a DashSet<String>,
+    pub db_sequences: &'a DashSet<String>,
     pub active_table_fields: &'a HashSet<String>,
     pub active_buffer_like_names: &'a HashSet<String>,
     pub unknown_variables_enabled: bool,
@@ -338,6 +339,7 @@ pub fn append_unknown_symbol_diags(inputs: UnknownSymbolDiagInputs<'_>, out: &mu
             if inputs.known_variables.contains(&r.name_upper)
                 || inputs.unknown_variables_ignored.contains(&r.name_upper)
                 || inputs.db_tables.contains(&r.name_upper)
+                || inputs.db_sequences.contains(&r.name_upper)
                 || inputs.active_table_fields.contains(&r.name_upper)
                 || is_builtin_variable_name(&r.name_upper)
                 || is_builtin_function_name(&r.name_upper)
@@ -378,8 +380,14 @@ pub fn append_unknown_symbol_diags(inputs: UnknownSymbolDiagInputs<'_>, out: &mu
 
 #[cfg(test)]
 mod tests {
-    use super::collect_identifier_refs_for_unknown_symbol_diag;
+    use super::{
+        IdentifierRef, UnknownSymbolDiagInputs, append_unknown_symbol_diags,
+        collect_identifier_refs_for_unknown_symbol_diag,
+    };
     use crate::analysis::parse_abl;
+    use dashmap::DashSet;
+    use std::collections::HashSet;
+    use tower_lsp::lsp_types::Range;
 
     #[test]
     fn ignores_preprocessor_references_for_unknown_variable_refs() {
@@ -434,5 +442,38 @@ a = NEW JsonArray(x).
         );
 
         assert!(refs.is_empty());
+    }
+
+    #[test]
+    fn ignores_db_sequence_for_unknown_variable_diagnostics() {
+        let refs = vec![IdentifierRef {
+            name_upper: "USERS_SEQ".to_string(),
+            display_name: "USERS_SEQ".to_string(),
+            range: Range::default(),
+        }];
+        let db_tables = DashSet::new();
+        let mut db_sequences = DashSet::new();
+        db_sequences.insert("USERS_SEQ".to_string());
+        let mut diags = Vec::new();
+
+        append_unknown_symbol_diags(
+            UnknownSymbolDiagInputs {
+                refs: &refs,
+                calls: &[],
+                known_variables: &HashSet::new(),
+                known_functions: &HashSet::new(),
+                unknown_variables_ignored: &HashSet::new(),
+                unknown_functions_ignored: &HashSet::new(),
+                db_tables: &db_tables,
+                db_sequences: &db_sequences,
+                active_table_fields: &HashSet::new(),
+                active_buffer_like_names: &HashSet::new(),
+                unknown_variables_enabled: true,
+                unknown_functions_enabled: true,
+            },
+            &mut diags,
+        );
+
+        assert!(diags.is_empty());
     }
 }

@@ -63,8 +63,10 @@ pub struct BackendState {
     pub workspace_root: AsyncMutex<Option<std::path::PathBuf>>,
     pub config: AsyncMutex<AblConfig>,
     pub db_tables: DashSet<String>,
+    pub db_sequences: DashSet<String>,
     pub db_table_labels: DashMap<String, String>,
     pub db_table_definitions: DashMap<String, Vec<Location>>,
+    pub db_sequence_definitions: DashMap<String, Vec<Location>>,
     pub db_field_definitions: DashMap<String, Vec<Location>>,
     pub db_index_definitions: DashMap<String, Vec<Location>>,
     pub db_indexes_by_table: DashMap<String, Vec<String>>,
@@ -497,8 +499,10 @@ impl Backend {
 
     async fn reload_db_tables(&self, workspace_root: Option<&Path>, dumpfiles: &[String]) {
         let mut tables = HashSet::<String>::new();
+        let mut sequences = HashSet::<String>::new();
         let mut table_labels = HashMap::<String, String>::new();
         let mut definitions = HashMap::<String, Vec<Location>>::new();
+        let mut sequence_definitions = HashMap::<String, Vec<Location>>::new();
         let mut field_definitions = HashMap::<String, Vec<Location>>::new();
         let mut index_definitions = HashMap::<String, Vec<Location>>::new();
         let mut indexes_by_table = HashMap::<String, Vec<String>>::new();
@@ -539,6 +543,21 @@ impl Backend {
                 tables.insert(key.clone());
                 table_labels.entry(key.clone()).or_insert(site.name);
                 definitions.entry(key).or_default().push(Location {
+                    uri: uri.clone(),
+                    range: site.range,
+                });
+            }
+
+            let mut sequence_sites = Vec::new();
+            crate::analysis::df::collect_df_sequence_sites(
+                tree.root_node(),
+                contents.as_bytes(),
+                &mut sequence_sites,
+            );
+            for site in sequence_sites {
+                let key = site.name.to_ascii_uppercase();
+                sequences.insert(key.clone());
+                sequence_definitions.entry(key).or_default().push(Location {
                     uri: uri.clone(),
                     range: site.range,
                 });
@@ -617,9 +636,17 @@ impl Backend {
         for table in tables {
             self.db_tables.insert(table);
         }
+        self.db_sequences.clear();
+        for sequence in sequences {
+            self.db_sequences.insert(sequence);
+        }
         self.db_table_definitions.clear();
         for (k, v) in definitions {
             self.db_table_definitions.insert(k, v);
+        }
+        self.db_sequence_definitions.clear();
+        for (k, v) in sequence_definitions {
+            self.db_sequence_definitions.insert(k, v);
         }
         self.db_table_labels.clear();
         for (k, v) in table_labels {
@@ -663,8 +690,9 @@ impl Backend {
             self.db_fields_by_table.insert(k, v);
         }
         debug!(
-            "loaded schema from dumpfile(s): tables={}, fields={}, indexes={}, table_field_sets={}",
+            "loaded schema from dumpfile(s): tables={}, sequences={}, fields={}, indexes={}, table_field_sets={}",
             self.db_tables.len(),
+            self.db_sequences.len(),
             self.db_field_definitions.len(),
             self.db_index_definitions.len(),
             self.db_fields_by_table.len()
