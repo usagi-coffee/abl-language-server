@@ -14,10 +14,11 @@ use crate::analysis::diagnostics::functions::{
     collect_function_calls,
 };
 use crate::analysis::diagnostics::symbols::{
-    IdentifierRef, UnknownSymbolDiagInputs, append_unknown_symbol_diags,
+    IdentifierRef, TableRef, UnknownSymbolDiagInputs, append_unknown_symbol_diags,
     collect_active_buffer_like_names, collect_active_db_table_field_symbols,
     collect_identifier_refs_for_unknown_symbol_diag, collect_known_symbols,
-    collect_local_table_field_symbols, normalize_identifier_refs,
+    collect_local_table_field_symbols, collect_table_refs_for_unknown_table_diag,
+    normalize_identifier_refs,
 };
 use crate::analysis::includes::{collect_include_sites_from_tree, resolve_include_site_path};
 use crate::backend::Backend;
@@ -146,7 +147,9 @@ pub async fn collect_unknown_symbol_diags(
     known_functions.extend(known_function_signatures.into_keys());
 
     let mut refs = Vec::<IdentifierRef>::new();
+    let mut table_refs = Vec::<TableRef>::new();
     collect_identifier_refs_for_unknown_symbol_diag(params.root, params.text.as_bytes(), &mut refs);
+    collect_table_refs_for_unknown_table_diag(params.root, params.text.as_bytes(), &mut table_refs);
     normalize_identifier_refs(&mut refs);
     let active_buffer_like_names =
         collect_active_buffer_like_names(params.root, params.text.as_bytes(), backend);
@@ -158,6 +161,7 @@ pub async fn collect_unknown_symbol_diags(
     append_unknown_symbol_diags(
         UnknownSymbolDiagInputs {
             refs: &refs,
+            table_refs: &table_refs,
             calls: &calls,
             known_variables: &known_variables,
             known_functions: &known_functions,

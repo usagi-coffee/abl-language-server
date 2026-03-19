@@ -150,6 +150,70 @@ pub fn use_index_table_symbol_at_offset(
     None
 }
 
+pub fn use_index_table_symbol_in_statement_prefix(text: &str, offset: usize) -> Option<String> {
+    let bytes = text.as_bytes();
+    let offset = offset.min(bytes.len());
+    let start = offset.saturating_sub(256);
+    let window = &text[start..offset];
+    let upper = window.to_ascii_uppercase();
+    let use_index_pos = upper.rfind("USE-INDEX")?;
+    let tail = &window[use_index_pos + "USE-INDEX".len()..];
+    let trimmed_tail = tail.trim_start();
+    if !trimmed_tail
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+    {
+        return None;
+    }
+
+    let head = &window[..use_index_pos];
+    let tokens = head
+        .split(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.')))
+        .filter(|token| !token.is_empty())
+        .collect::<Vec<_>>();
+
+    let mut candidate = None;
+    let mut i = 0usize;
+    while i < tokens.len() {
+        if tokens[i].eq_ignore_ascii_case("FOR")
+            && tokens
+                .get(i + 1)
+                .is_some_and(|token| token.eq_ignore_ascii_case("EACH"))
+            && let Some(table) = tokens.get(i + 2)
+        {
+            candidate = Some(*table);
+            i += 3;
+            continue;
+        }
+
+        if tokens[i].eq_ignore_ascii_case("FIND") {
+            let mut table_idx = i + 1;
+            if tokens.get(table_idx).is_some_and(|token| {
+                matches!(
+                    token.to_ascii_uppercase().as_str(),
+                    "FIRST" | "LAST" | "NEXT" | "PREV" | "PREVIOUS" | "CURRENT" | "UNIQUE"
+                )
+            }) {
+                table_idx += 1;
+            }
+            if let Some(table) = tokens.get(table_idx) {
+                candidate = Some(*table);
+            }
+        }
+
+        i += 1;
+    }
+
+    candidate.map(|name| {
+        name.trim()
+            .rsplit('.')
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .to_string()
+    })
+}
+
 pub fn field_detail(field: &DbFieldInfo, table_key: &str) -> String {
     match field.field_type.as_deref() {
         Some(ty) => format!("{ty} ({table_key})"),
@@ -189,6 +253,7 @@ mod tests {
         lookup_case_insensitive_fields_by_table_symbol, lookup_case_insensitive_indexes_by_table,
         lookup_case_insensitive_indexes_by_table_symbol, qualifier_before_dot,
         text_has_dot_before_cursor, use_index_table_symbol_at_offset,
+        use_index_table_symbol_in_statement_prefix,
     };
     use crate::analysis::parse_abl;
     use crate::backend::DbFieldInfo;
@@ -240,6 +305,22 @@ END.
         let offset = src.find("CustNum").expect("index usage");
         let table = use_index_table_symbol_at_offset(tree.root_node(), src, offset + 2)
             .expect("table symbol");
+        assert_eq!(table, "Customer");
+    }
+
+    #[test]
+    fn detects_use_index_table_symbol_before_index_is_parsed() {
+        let src = "FOR EACH Customer NO-LOCK USE-INDEX ";
+        let table =
+            use_index_table_symbol_in_statement_prefix(src, src.len()).expect("table symbol");
+        assert_eq!(table, "Customer");
+    }
+
+    #[test]
+    fn detects_find_use_index_table_symbol_before_index_is_parsed() {
+        let src = "FIND FIRST sports.Customer USE-INDEX ";
+        let table =
+            use_index_table_symbol_in_statement_prefix(src, src.len()).expect("table symbol");
         assert_eq!(table, "Customer");
     }
 

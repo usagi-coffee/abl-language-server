@@ -20,6 +20,13 @@ pub struct IdentifierRef {
     pub range: Range,
 }
 
+#[derive(Clone)]
+pub struct TableRef {
+    pub name_upper: String,
+    pub display_name: String,
+    pub range: Range,
+}
+
 pub fn collect_known_symbols(
     root: Node<'_>,
     src: &[u8],
@@ -89,6 +96,35 @@ pub fn collect_identifier_refs_for_unknown_symbol_diag(
     for i in 0..node.child_count() {
         if let Some(ch) = node.child(i as u32) {
             collect_identifier_refs_for_unknown_symbol_diag(ch, src, out);
+        }
+    }
+}
+
+pub fn collect_table_refs_for_unknown_table_diag(
+    node: Node<'_>,
+    src: &[u8],
+    out: &mut Vec<TableRef>,
+) {
+    if matches!(node.kind(), "record_phrase" | "find_statement")
+        && let Some(record) = node
+            .child_by_field_name("record")
+            .or_else(|| node.child_by_field_name("table"))
+        && record.kind() == "identifier"
+        && let Ok(name_raw) = record.utf8_text(src)
+    {
+        let display_name = name_raw.trim().to_string();
+        if !display_name.is_empty() {
+            out.push(TableRef {
+                name_upper: display_name.to_ascii_uppercase(),
+                display_name,
+                range: node_to_range(record),
+            });
+        }
+    }
+
+    for i in 0..node.child_count() {
+        if let Some(ch) = node.child(i as u32) {
+            collect_table_refs_for_unknown_table_diag(ch, src, out);
         }
     }
 }
@@ -320,6 +356,7 @@ pub fn normalize_identifier_refs(refs: &mut Vec<IdentifierRef>) {
 
 pub struct UnknownSymbolDiagInputs<'a> {
     pub refs: &'a [IdentifierRef],
+    pub table_refs: &'a [TableRef],
     pub calls: &'a [FunctionCallSite],
     pub known_variables: &'a HashSet<String>,
     pub known_functions: &'a HashSet<String>,
@@ -334,6 +371,21 @@ pub struct UnknownSymbolDiagInputs<'a> {
 }
 
 pub fn append_unknown_symbol_diags(inputs: UnknownSymbolDiagInputs<'_>, out: &mut Vec<Diagnostic>) {
+    for table_ref in inputs.table_refs {
+        if inputs.known_variables.contains(&table_ref.name_upper)
+            || inputs.db_tables.contains(&table_ref.name_upper)
+        {
+            continue;
+        }
+        out.push(Diagnostic {
+            range: table_ref.range,
+            severity: Some(DiagnosticSeverity::ERROR),
+            source: Some("abl-semantic".into()),
+            message: format!("Unknown table '{}'", table_ref.display_name),
+            ..Default::default()
+        });
+    }
+
     if inputs.unknown_variables_enabled {
         for r in inputs.refs {
             if inputs.known_variables.contains(&r.name_upper)
@@ -381,7 +433,7 @@ pub fn append_unknown_symbol_diags(inputs: UnknownSymbolDiagInputs<'_>, out: &mu
 #[cfg(test)]
 mod tests {
     use super::{
-        IdentifierRef, UnknownSymbolDiagInputs, append_unknown_symbol_diags,
+        IdentifierRef, TableRef, UnknownSymbolDiagInputs, append_unknown_symbol_diags,
         collect_identifier_refs_for_unknown_symbol_diag,
     };
     use crate::analysis::parse_abl;
@@ -459,6 +511,7 @@ a = NEW JsonArray(x).
         append_unknown_symbol_diags(
             UnknownSymbolDiagInputs {
                 refs: &refs,
+                table_refs: &[],
                 calls: &[],
                 known_variables: &HashSet::new(),
                 known_functions: &HashSet::new(),
@@ -475,5 +528,39 @@ a = NEW JsonArray(x).
         );
 
         assert!(diags.is_empty());
+    }
+
+    #[test]
+    fn reports_unknown_table_diagnostics() {
+        let table_refs = vec![TableRef {
+            name_upper: "XAAA".to_string(),
+            display_name: "xaaa".to_string(),
+            range: Range::default(),
+        }];
+        let db_tables = DashSet::new();
+        let db_sequences = DashSet::new();
+        let mut diags = Vec::new();
+
+        append_unknown_symbol_diags(
+            UnknownSymbolDiagInputs {
+                refs: &[],
+                table_refs: &table_refs,
+                calls: &[],
+                known_variables: &HashSet::new(),
+                known_functions: &HashSet::new(),
+                unknown_variables_ignored: &HashSet::new(),
+                unknown_functions_ignored: &HashSet::new(),
+                db_tables: &db_tables,
+                db_sequences: &db_sequences,
+                active_table_fields: &HashSet::new(),
+                active_buffer_like_names: &HashSet::new(),
+                unknown_variables_enabled: true,
+                unknown_functions_enabled: true,
+            },
+            &mut diags,
+        );
+
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].message, "Unknown table 'xaaa'");
     }
 }

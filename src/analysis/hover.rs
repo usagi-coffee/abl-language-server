@@ -6,7 +6,7 @@ use crate::analysis::buffers::collect_buffer_mappings;
 use crate::analysis::functions::FunctionSignature;
 use crate::analysis::local_tables::collect_local_table_definitions;
 use crate::backend::DbFieldInfo;
-use crate::utils::ts::{direct_child_by_kind, node_trimmed_text};
+use crate::utils::ts::node_trimmed_text;
 
 #[derive(Clone)]
 pub struct DbFieldMatch {
@@ -15,12 +15,28 @@ pub struct DbFieldMatch {
 }
 
 pub fn symbol_at_offset(root: Node<'_>, text: &str, offset: usize) -> Option<String> {
-    let node = root.named_descendant_for_byte_range(offset, offset)?;
-    if node.kind() == "identifier" {
-        return node_trimmed_text(node, text.as_bytes());
+    let bytes = text.as_bytes();
+    if bytes.is_empty() {
+        return None;
     }
 
-    direct_child_by_kind(node, "identifier").and_then(|n| node_trimmed_text(n, text.as_bytes()))
+    let mut probes = Vec::with_capacity(2);
+    let clamped = offset.min(bytes.len().saturating_sub(1));
+    probes.push(clamped);
+    if clamped > 0 {
+        probes.push(clamped - 1);
+    }
+
+    for probe in probes {
+        let Some(node) = root.named_descendant_for_byte_range(probe, probe) else {
+            continue;
+        };
+        if node.kind() == "identifier" {
+            return node_trimmed_text(node, bytes);
+        }
+    }
+
+    None
 }
 
 pub fn markdown_hover(markdown: String) -> Hover {
@@ -233,6 +249,18 @@ DEFINE TEMP-TABLE ZM_CENY NO-UNDO
         };
         assert!(markup.value.contains("ZM_CENY_KOD"));
         assert!(markup.value.contains("ZM_CENY"));
+    }
+
+    #[test]
+    fn symbol_at_offset_prefers_actual_index_identifier() {
+        let src = "FOR EACH ZM_PRICES NO-LOCK USE-INDEX PRICE_IDX:\nEND.\n";
+        let tree = parse_abl(src);
+        let offset = src.find("PRICE_IDX").expect("index offset") + 2;
+
+        assert_eq!(
+            symbol_at_offset(tree.root_node(), src, offset).as_deref(),
+            Some("PRICE_IDX")
+        );
     }
 
     #[test]

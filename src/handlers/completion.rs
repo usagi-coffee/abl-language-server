@@ -11,6 +11,7 @@ use crate::analysis::completion::{
     lookup_case_insensitive_fields_by_table_symbol,
     lookup_case_insensitive_indexes_by_table_symbol, qualifier_before_dot,
     text_has_dot_before_cursor, use_index_table_symbol_at_offset,
+    use_index_table_symbol_in_statement_prefix,
 };
 use crate::analysis::completion_support::{
     build_field_completion_items, completion_response, is_parameter_symbol_at_byte,
@@ -37,6 +38,91 @@ struct CompletionCandidate {
 const COMPLETION_INCLUDE_BUDGET_MS: u64 = 120;
 
 impl Backend {
+    pub(crate) async fn resolve_use_index_table_key(
+        &self,
+        uri: &Url,
+        text: &str,
+        root: Node<'_>,
+        offset: usize,
+    ) -> Option<String> {
+        let use_index_symbol = use_index_table_symbol_at_offset(root, text, offset)
+            .or_else(|| use_index_table_symbol_in_statement_prefix(text, offset))?;
+        let mut table_key = use_index_symbol.to_ascii_uppercase();
+        if lookup_case_insensitive_indexes_by_table_symbol(&self.db_indexes_by_table, &table_key)
+            .is_some()
+        {
+            return Some(table_key);
+        }
+
+        if let Some(table) =
+            nearest_buffer_mapping_table(root, text.as_bytes(), &use_index_symbol, offset)
+        {
+            table_key = table.to_ascii_uppercase();
+            return Some(table_key);
+        }
+
+        let Ok(current_path) = uri.to_file_path() else {
+            return Some(table_key);
+        };
+
+        let include_sites = collect_include_sites_from_tree(root, text.as_bytes());
+        let mut available_define_sites = Vec::new();
+        collect_preprocessor_define_sites(root, text.as_bytes(), &mut available_define_sites);
+
+        let mut before: Option<(usize, String)> = None;
+        for include in include_sites {
+            if include.start_offset > offset {
+                continue;
+            }
+
+            let include_path_value = resolve_include_site_path(&include, &available_define_sites);
+            let Some(include_path) = self
+                .resolve_include_path_for(&current_path, &include_path_value)
+                .await
+            else {
+                continue;
+            };
+
+            let Some((include_text, include_tree)) =
+                self.get_cached_include_parse(&include_path).await
+            else {
+                continue;
+            };
+
+            if let Some(table) = nearest_buffer_mapping_table(
+                include_tree.root_node(),
+                include_text.as_bytes(),
+                &use_index_symbol,
+                usize::MAX,
+            ) {
+                let should_take = before
+                    .as_ref()
+                    .map(|(start, _)| include.start_offset > *start)
+                    .unwrap_or(true);
+                if should_take {
+                    before = Some((include.start_offset, table));
+                }
+            }
+
+            let mut include_global_defines = Vec::new();
+            collect_global_preprocessor_define_sites(
+                include_tree.root_node(),
+                include_text.as_bytes(),
+                &mut include_global_defines,
+            );
+            for mut define in include_global_defines {
+                define.start_byte = include.start_offset;
+                available_define_sites.push(define);
+            }
+        }
+
+        if let Some((_, table)) = before {
+            table_key = table.to_ascii_uppercase();
+        }
+
+        Some(table_key)
+    }
+
     pub async fn handle_completion(
         &self,
         params: CompletionParams,
@@ -75,45 +161,10 @@ impl Backend {
         let prefix = ascii_ident_prefix(&text, offset);
         let root = tree.root_node();
 
-        if let Some(use_index_symbol) = use_index_table_symbol_at_offset(root, &text, offset) {
-            let mut table_key = use_index_symbol.to_ascii_uppercase();
-            if lookup_case_insensitive_indexes_by_table_symbol(
-                &self.db_indexes_by_table,
-                &table_key,
-            )
-            .is_none()
-            {
-                let mut mappings = Vec::new();
-                collect_buffer_mappings(root, text.as_bytes(), &mut mappings);
-                let mut before: Option<(usize, String)> = None;
-                let mut after: Option<(usize, String)> = None;
-                for mapping in mappings {
-                    if !mapping.alias.eq_ignore_ascii_case(&use_index_symbol) {
-                        continue;
-                    }
-                    if mapping.start_byte <= offset {
-                        let should_take = before
-                            .as_ref()
-                            .map(|(start, _)| mapping.start_byte > *start)
-                            .unwrap_or(true);
-                        if should_take {
-                            before = Some((mapping.start_byte, mapping.table.clone()));
-                        }
-                    } else {
-                        let should_take = after
-                            .as_ref()
-                            .map(|(start, _)| mapping.start_byte < *start)
-                            .unwrap_or(true);
-                        if should_take {
-                            after = Some((mapping.start_byte, mapping.table.clone()));
-                        }
-                    }
-                }
-                if let Some((_, table)) = before.or(after) {
-                    table_key = table.to_ascii_uppercase();
-                }
-            }
-
+        if let Some(table_key) = self
+            .resolve_use_index_table_key(&uri, &text, root, offset)
+            .await
+        {
             let pref_up = prefix.to_ascii_uppercase();
             let items = lookup_case_insensitive_indexes_by_table_symbol(
                 &self.db_indexes_by_table,
@@ -408,6 +459,42 @@ impl Backend {
             })
             .collect()
     }
+}
+
+fn nearest_buffer_mapping_table(
+    root: Node<'_>,
+    src: &[u8],
+    alias: &str,
+    offset: usize,
+) -> Option<String> {
+    let mut mappings = Vec::new();
+    collect_buffer_mappings(root, src, &mut mappings);
+    let mut before: Option<(usize, String)> = None;
+    let mut after: Option<(usize, String)> = None;
+    for mapping in mappings {
+        if !mapping.alias.eq_ignore_ascii_case(alias) {
+            continue;
+        }
+        if mapping.start_byte <= offset {
+            let should_take = before
+                .as_ref()
+                .map(|(start, _)| mapping.start_byte > *start)
+                .unwrap_or(true);
+            if should_take {
+                before = Some((mapping.start_byte, mapping.table.clone()));
+            }
+        } else {
+            let should_take = after
+                .as_ref()
+                .map(|(start, _)| mapping.start_byte < *start)
+                .unwrap_or(true);
+            if should_take {
+                after = Some((mapping.start_byte, mapping.table.clone()));
+            }
+        }
+    }
+
+    before.or(after).map(|(_, table)| table)
 }
 
 fn completion_label_matches_prefix(label: &str, prefix_upper: &str) -> bool {

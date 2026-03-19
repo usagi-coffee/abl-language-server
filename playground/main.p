@@ -85,7 +85,7 @@ lv_counter = parametr(lv_counter).
 
 /* Include provides temp-table definition with fields (hover/goto on fields). */
 {{&ZM_INC}zm_ceny.i}
-FOR EACH ZM_CENY NO-LOCK USE-INDEX ZM_PRICES:
+FOR EACH ZM_PRICES NO-LOCK USE-INDEX PRICE_IDX:
   lv_name = ZM_PRICES.
 END.
 
