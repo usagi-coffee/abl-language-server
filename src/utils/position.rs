@@ -9,20 +9,27 @@ pub fn lsp_pos_to_utf8_byte_offset(text: &str, pos: Position) -> Option<usize> {
     let mut cur_line = 0usize;
     let mut line_start = 0usize;
 
-    for (i, b) in text.bytes().enumerate() {
-        if cur_line == line {
-            line_start = i;
-            break;
+    if line != 0 {
+        let mut found = false;
+        for (i, b) in text.bytes().enumerate() {
+            if b == b'\n' {
+                cur_line += 1;
+                if cur_line == line {
+                    line_start = i + 1;
+                    found = true;
+                    break;
+                }
+            }
         }
-        if b == b'\n' {
-            cur_line += 1;
-        }
-    }
 
-    if line == 0 {
-        line_start = 0;
-    } else if cur_line != line {
-        return None;
+        if !found {
+            if cur_line == line {
+                // Cursor can legally point at the final empty line after a trailing newline.
+                line_start = text.len();
+            } else {
+                return None;
+            }
+        }
     }
 
     // find line end
@@ -183,6 +190,20 @@ mod tests {
     fn position_to_offset_clamps_to_line_end() {
         let text = "abc\nxy";
         let off = lsp_pos_to_utf8_byte_offset(text, Position::new(1, 10)).expect("offset");
+        assert_eq!(off, text.len());
+    }
+
+    #[test]
+    fn position_to_offset_handles_final_empty_line() {
+        let text = "abc\n";
+        let off = lsp_pos_to_utf8_byte_offset(text, Position::new(1, 0)).expect("offset");
+        assert_eq!(off, text.len());
+    }
+
+    #[test]
+    fn position_to_offset_handles_multiple_trailing_empty_lines() {
+        let text = "abc\n\n";
+        let off = lsp_pos_to_utf8_byte_offset(text, Position::new(2, 0)).expect("offset");
         assert_eq!(off, text.len());
     }
 
