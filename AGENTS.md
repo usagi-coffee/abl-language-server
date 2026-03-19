@@ -59,8 +59,7 @@ Run in this exact order:
 4. `cargo build -r` (manual changes)
 
 Notes:
-- Do not skip `clippy --fix` unless it fails due to an external/tooling issue.
-- If any step fails, report the failure and stop before further edits. Keep logging useful but restrained (`debug!` for development flow, avoid noisy logs in hot paths unless needed for diagnosis).
+- Do not skip `clippy --fix --allow-dirty` unless it fails due to an external/tooling issue.
 
 ## Notes
 
