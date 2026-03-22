@@ -84,6 +84,7 @@ fn parse_abl_tree(text: &str) -> Option<tree_sitter::Tree> {
 
 fn collect_line_indents(node: Node<'_>, text: &str, line_indents: &mut [usize]) {
     apply_body_indent(node, text, line_indents);
+    apply_definition_indent(node, text, line_indents);
     apply_continuation_indent(node, line_indents);
 
     let mut cursor = node.walk();
@@ -119,6 +120,32 @@ fn apply_body_indent(node: Node<'_>, text: &str, line_indents: &mut [usize]) {
             end_row = end_row.saturating_sub(1);
         }
         add_indent_range(line_indents, start, end_row);
+    }
+}
+
+fn apply_definition_indent(node: Node<'_>, text: &str, line_indents: &mut [usize]) {
+    match node.kind() {
+        "function_definition" => {
+            let start = first_statement_row(node);
+            let mut end = last_statement_row(node).unwrap_or_else(|| node.end_position().row);
+            if is_block_closer_line(text, end) {
+                end = end.saturating_sub(1);
+            }
+            if let Some(start) = start {
+                add_indent_range(line_indents, start, end);
+            }
+        }
+        "temp_table_definition" | "work_table_definition" => {
+            let Some(start) =
+                first_child_row_of_kinds(node, &["temp_table_field", "temp_table_index"])
+            else {
+                return;
+            };
+            let end = last_child_row_of_kinds(node, &["temp_table_field", "temp_table_index"])
+                .unwrap_or(start);
+            add_indent_range(line_indents, start, end);
+        }
+        _ => {}
     }
 }
 
@@ -173,6 +200,46 @@ fn first_named_child_of_kind<'a>(node: Node<'a>, kind: &str) -> Option<Node<'a>>
     let mut cursor = node.walk();
     node.children(&mut cursor)
         .find(|child| child.is_named() && child.kind() == kind)
+}
+
+fn first_child_row_of_kinds(node: Node<'_>, kinds: &[&str]) -> Option<usize> {
+    let mut cursor = node.walk();
+    node.children(&mut cursor)
+        .find(|child| child.is_named() && kinds.contains(&child.kind()))
+        .map(|child| child.start_position().row)
+}
+
+fn last_child_row_of_kinds(node: Node<'_>, kinds: &[&str]) -> Option<usize> {
+    let mut cursor = node.walk();
+    node.children(&mut cursor)
+        .filter(|child| child.is_named() && kinds.contains(&child.kind()))
+        .map(|child| child.end_position().row)
+        .last()
+}
+
+fn first_statement_row(node: Node<'_>) -> Option<usize> {
+    let mut cursor = node.walk();
+    node.children(&mut cursor)
+        .find(|child| child.is_named() && is_statement_like(child.kind()))
+        .map(|child| child.start_position().row)
+}
+
+fn last_statement_row(node: Node<'_>) -> Option<usize> {
+    let mut cursor = node.walk();
+    node.children(&mut cursor)
+        .filter(|child| child.is_named() && is_statement_like(child.kind()))
+        .map(|child| {
+            let mut end_row = child.end_position().row;
+            if child.end_position().column == 0 && end_row > 0 {
+                end_row -= 1;
+            }
+            end_row
+        })
+        .last()
+}
+
+fn is_statement_like(kind: &str) -> bool {
+    kind.ends_with("_statement") || kind.ends_with("_definition")
 }
 
 fn if_then_anchor<'a>(node: Node<'a>) -> Option<Node<'a>> {
@@ -349,6 +416,23 @@ mod tests {
         let got = autoindent_text(input, IndentOptions::default());
         let expected =
             "IF ready THEN DO:\n  FOR EACH item NO-LOCK:\n    MESSAGE item.id.\n  END.\nEND.";
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn indents_function_body_and_keeps_end_function_aligned() {
+        let input = "FUNCTION f RETURNS LOGICAL ():\nRETURN TRUE.\nEND FUNCTION.";
+        let got = autoindent_text(input, IndentOptions::default());
+        let expected = "FUNCTION f RETURNS LOGICAL ():\n  RETURN TRUE.\nEND FUNCTION.";
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn indents_temp_table_fields_and_indexes() {
+        let input =
+            "DEFINE TEMP-TABLE tt NO-UNDO\nFIELD id AS CHARACTER\nINDEX idx IS PRIMARY UNIQUE id.";
+        let got = autoindent_text(input, IndentOptions::default());
+        let expected = "DEFINE TEMP-TABLE tt NO-UNDO\n  FIELD id AS CHARACTER\n  INDEX idx IS PRIMARY UNIQUE id.";
         assert_eq!(got, expected);
     }
 }
