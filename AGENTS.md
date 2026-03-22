@@ -49,6 +49,7 @@ If `cargo` commands fail with crate download errors, the environment has no netw
 
 - Prefer small, focused handler logic and move reusable analysis into `src/analysis/*` and `src/utils/*`.
 - Do not silently degrade diagnostics/completion behavior when adding new features; keep existing flows intact unless change is intentional and documented.
+- When the user provides a code sample to reproduce a bug, do not copy that sample 1:1 into tests by default; prefer a minimal synthetic regression case that reproduces the same failure.
 
 ## Required verification sequence (after every code change)
 

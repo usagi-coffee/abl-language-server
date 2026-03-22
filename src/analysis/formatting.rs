@@ -20,7 +20,7 @@ pub fn autoindent_text(text: &str, options: IndentOptions) -> String {
     let mut line_indents = vec![0usize; line_count(text)];
 
     if let Some(tree) = parse_abl_tree(text) {
-        collect_line_indents(tree.root_node(), &mut line_indents);
+        collect_line_indents(tree.root_node(), text, &mut line_indents);
     }
 
     for (idx, raw_line) in text.split_inclusive('\n').enumerate() {
@@ -82,19 +82,19 @@ fn parse_abl_tree(text: &str) -> Option<tree_sitter::Tree> {
     parser.parse(text, None)
 }
 
-fn collect_line_indents(node: Node<'_>, line_indents: &mut [usize]) {
-    apply_body_indent(node, line_indents);
+fn collect_line_indents(node: Node<'_>, text: &str, line_indents: &mut [usize]) {
+    apply_body_indent(node, text, line_indents);
     apply_continuation_indent(node, line_indents);
 
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         if child.is_named() {
-            collect_line_indents(child, line_indents);
+            collect_line_indents(child, text, line_indents);
         }
     }
 }
 
-fn apply_body_indent(node: Node<'_>, line_indents: &mut [usize]) {
+fn apply_body_indent(node: Node<'_>, text: &str, line_indents: &mut [usize]) {
     if node.kind() == "include_file_reference" {
         let start = node.start_position().row + 1;
         let end = node.end_position().row.saturating_sub(1);
@@ -114,6 +114,9 @@ fn apply_body_indent(node: Node<'_>, line_indents: &mut [usize]) {
         };
         if end_col == 0 && end_row > 0 {
             end_row -= 1;
+        }
+        if end_row >= start && body_ends_with_own_block_closer(body, text, end_row) {
+            end_row = end_row.saturating_sub(1);
         }
         add_indent_range(line_indents, start, end_row);
     }
@@ -203,6 +206,36 @@ fn add_indent_range(line_indents: &mut [usize], start: usize, end: usize) {
     for indent in line_indents.iter_mut().take(to + 1).skip(from) {
         *indent += 1;
     }
+}
+
+fn is_block_closer_line(text: &str, row: usize) -> bool {
+    let Some(line) = text.lines().nth(row) else {
+        return false;
+    };
+    let trimmed = line.trim_start_matches([' ', '\t']);
+    let upper = trimmed.to_ascii_uppercase();
+    upper.starts_with("END")
+        || upper.starts_with("ELSE")
+        || upper.starts_with("CATCH")
+        || upper.starts_with("FINALLY")
+}
+
+fn body_ends_with_own_block_closer(body: Node<'_>, text: &str, end_row: usize) -> bool {
+    if !is_block_closer_line(text, end_row) {
+        return false;
+    }
+
+    let Some(last_child) = body.named_child(body.named_child_count().saturating_sub(1) as u32)
+    else {
+        return true;
+    };
+
+    let mut last_child_end_row = last_child.end_position().row;
+    if last_child.end_position().column == 0 && last_child_end_row > 0 {
+        last_child_end_row -= 1;
+    }
+
+    last_child_end_row < end_row
 }
 
 fn push_indent(out: &mut String, level: usize, options: IndentOptions) {
@@ -298,7 +331,24 @@ mod tests {
         let source = "IF TRUE THEN DO:\nMESSAGE \"X\".\nEND.\n";
         let tree = parse_abl(source);
         let mut indents = vec![0usize; 4];
-        collect_line_indents(tree.root_node(), &mut indents);
+        collect_line_indents(tree.root_node(), source, &mut indents);
         assert_eq!(indents, vec![0, 1, 0, 0]);
+    }
+
+    #[test]
+    fn keeps_end_procedure_aligned_with_procedure_header_without_trailing_newline() {
+        let input = "PROCEDURE p:\nMESSAGE \"x\".\nEND PROCEDURE.";
+        let got = autoindent_text(input, IndentOptions::default());
+        let expected = "PROCEDURE p:\n  MESSAGE \"x\".\nEND PROCEDURE.";
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn keeps_nested_end_lines_aligned_without_trailing_newline() {
+        let input = "IF ready THEN DO:\nFOR EACH item NO-LOCK:\nMESSAGE item.id.\nEND.\nEND.";
+        let got = autoindent_text(input, IndentOptions::default());
+        let expected =
+            "IF ready THEN DO:\n  FOR EACH item NO-LOCK:\n    MESSAGE item.id.\n  END.\nEND.";
+        assert_eq!(got, expected);
     }
 }
