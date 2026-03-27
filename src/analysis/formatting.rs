@@ -84,6 +84,7 @@ fn parse_abl_tree(text: &str) -> Option<tree_sitter::Tree> {
 
 fn collect_line_indents(node: Node<'_>, text: &str, line_indents: &mut [usize]) {
     apply_body_indent(node, text, line_indents);
+    apply_case_indent(node, line_indents);
     apply_definition_indent(node, text, line_indents);
     apply_continuation_indent(node, line_indents);
 
@@ -92,6 +93,20 @@ fn collect_line_indents(node: Node<'_>, text: &str, line_indents: &mut [usize]) 
         if child.is_named() {
             collect_line_indents(child, text, line_indents);
         }
+    }
+}
+
+fn apply_case_indent(node: Node<'_>, line_indents: &mut [usize]) {
+    match node.kind() {
+        "case_when_phrase" | "case_otherwise_phrase" => {
+            let start = node.start_position().row;
+            let mut end = node.end_position().row;
+            if node.end_position().column == 0 && end > 0 {
+                end -= 1;
+            }
+            add_indent_range(line_indents, start, end);
+        }
+        _ => {}
     }
 }
 
@@ -165,35 +180,37 @@ fn continuation_range(node: Node<'_>) -> Option<(usize, usize)> {
     }
 
     match node.kind() {
-        "for_statement" | "repeat_statement" | "do_statement" | "if_statement" => {
-            let body_or_then = if node.kind() == "if_statement" {
-                if_then_anchor(node)
-            } else {
-                first_named_child_of_kind(node, "body")
-            };
-            let anchor = body_or_then?;
-            let anchor_row = anchor.start_position().row;
-            let anchor_col = anchor.start_position().column;
-            let upper = if anchor_col == 0 {
-                anchor_row.saturating_sub(1)
-            } else {
-                anchor_row
-            };
-            let from = start_row.saturating_add(1);
-            (from <= upper).then_some((from, upper))
+        "case_statement" => None,
+        "if_statement" => {
+            let anchor = if_then_anchor(node)?;
+            continuation_range_until_anchor(start_row, anchor)
         }
-        "find_statement"
-        | "assign_statement"
-        | "assignment_statement"
-        | "prompt_for_statement"
-        | "transaction_statement"
-        | "can_find_expression"
-        | "function_call_statement" => {
+        "can_find_expression" => {
             let from = start_row.saturating_add(1);
             (from <= end_row).then_some((from, end_row))
         }
+        kind if kind.ends_with("_statement") => {
+            if let Some(body) = first_named_child_of_kind(node, "body") {
+                continuation_range_until_anchor(start_row, body)
+            } else {
+                let from = start_row.saturating_add(1);
+                (from <= end_row).then_some((from, end_row))
+            }
+        }
         _ => None,
     }
+}
+
+fn continuation_range_until_anchor(start_row: usize, anchor: Node<'_>) -> Option<(usize, usize)> {
+    let anchor_row = anchor.start_position().row;
+    let anchor_col = anchor.start_position().column;
+    let upper = if anchor_col == 0 {
+        anchor_row.saturating_sub(1)
+    } else {
+        anchor_row
+    };
+    let from = start_row.saturating_add(1);
+    (from <= upper).then_some((from, upper))
 }
 
 fn first_named_child_of_kind<'a>(node: Node<'a>, kind: &str) -> Option<Node<'a>> {
@@ -369,6 +386,30 @@ mod tests {
         let input = "ASSIGN\nx = 1\ny = 2.\n";
         let got = autoindent_text(input, IndentOptions::default());
         let expected = "ASSIGN\n  x = 1\n  y = 2.\n";
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn indents_multiline_put_stream_unformatted_items() {
+        let input = "PUT STREAM estr UNFORMATTED\n\"lvc_execname\"   \" \" lvc_execname   skip\n\"lvc_key1\"       \" \" lvc_key1       skip\n\"kod_kk\"         \" \" kod_kk\n.\n";
+        let got = autoindent_text(input, IndentOptions::default());
+        let expected = "PUT STREAM estr UNFORMATTED\n  \"lvc_execname\"   \" \" lvc_execname   skip\n  \"lvc_key1\"       \" \" lvc_key1       skip\n  \"kod_kk\"         \" \" kod_kk\n  .\n";
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn indents_case_when_and_otherwise_phrases() {
+        let input = "CASE lvc_execname:\nWHEN 'x1pwkon' THEN LEAVE.\nWHEN 'x1atrup1' THEN typ_kk = \"PG\".\nOTHERWISE typ_kk = \"PW\".\nEND CASE.\n";
+        let got = autoindent_text(input, IndentOptions::default());
+        let expected = "CASE lvc_execname:\n  WHEN 'x1pwkon' THEN LEAVE.\n  WHEN 'x1atrup1' THEN typ_kk = \"PG\".\n  OTHERWISE typ_kk = \"PW\".\nEND CASE.\n";
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn indents_nested_case_do_body() {
+        let input = "CASE status:\nWHEN \"A\" THEN DO:\nPUT UNFORMATTED \"A\" SKIP.\nEND.\nOTHERWISE PUT UNFORMATTED \"Z\" SKIP.\nEND CASE.\n";
+        let got = autoindent_text(input, IndentOptions::default());
+        let expected = "CASE status:\n  WHEN \"A\" THEN DO:\n    PUT UNFORMATTED \"A\" SKIP.\n  END.\n  OTHERWISE PUT UNFORMATTED \"Z\" SKIP.\nEND CASE.\n";
         assert_eq!(got, expected);
     }
 
