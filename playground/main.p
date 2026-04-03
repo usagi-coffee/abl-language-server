@@ -91,3 +91,7 @@ END.
 
 /* USE-INDEX context should prefer DB index over same-named fields if conflict exists. */
 FIND FIRST z9zw_mstr USE-INDEX z9zw_idx NO-LOCK NO-ERROR.
+
+// This function was defined in an ambient file that does not need to be included
+// Definition should work along with JSDOC-like description
+INDEX(1, 2).

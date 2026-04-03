@@ -310,6 +310,48 @@ pub async fn resolve_include_definition_location(
         .map(|(_, location)| location)
 }
 
+pub async fn resolve_ambient_definition_location(
+    backend: &Backend,
+    symbol: &str,
+) -> Option<Location> {
+    for ambient_path in backend.ambient_paths().await {
+        let Some((ambient_text, ambient_tree)) =
+            backend.get_cached_include_parse(&ambient_path).await
+        else {
+            continue;
+        };
+
+        let mut sites = Vec::new();
+        collect_definition_sites(
+            ambient_tree.root_node(),
+            ambient_text.as_bytes(),
+            &mut sites,
+        );
+        collect_local_table_field_sites(
+            ambient_tree.root_node(),
+            ambient_text.as_bytes(),
+            &mut sites,
+        );
+
+        let Some(site) = sites
+            .iter()
+            .find(|site| site.label.eq_ignore_ascii_case(symbol))
+        else {
+            continue;
+        };
+        let Some(uri) = Url::from_file_path(&ambient_path).ok() else {
+            continue;
+        };
+
+        return Some(Location {
+            uri,
+            range: site.range,
+        });
+    }
+
+    None
+}
+
 pub struct PreprocessorDefineMatch {
     pub name: String,
     pub value: Option<String>,
@@ -470,8 +512,8 @@ fn pick_best_preprocessor_site<'a>(
 #[cfg(test)]
 mod tests {
     use super::{
-        pick_best_preprocessor_site, resolve_buffer_alias_table_location,
-        resolve_local_definition_location,
+        pick_best_preprocessor_site, resolve_ambient_definition_location,
+        resolve_buffer_alias_table_location, resolve_local_definition_location,
     };
     use crate::analysis::definitions::PreprocessorDefineSite;
     use crate::analysis::parse_abl;
@@ -590,5 +632,49 @@ END.
 
         assert_eq!(location.uri, uri);
         assert_eq!(location.range.start.line, 1);
+    }
+
+    #[tokio::test]
+    async fn resolves_ambient_definition_location() {
+        let base = std::env::temp_dir().join(format!(
+            "abl_ls_ambient_definition_test_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("epoch")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&base).expect("create temp dir");
+        let ambient = base.join("docs.i");
+        std::fs::write(
+            &ambient,
+            r#"
+/**
+ * Ambient docs.
+ */
+FUNCTION INDEX RETURNS INTEGER (
+    source-string AS CHARACTER,
+    target-string AS CHARACTER
+  ) FORWARD.
+"#,
+        )
+        .expect("write ambient");
+
+        let backend = test_backend();
+        {
+            let mut config = backend.config.lock().await;
+            config.ambient = vec![ambient.to_string_lossy().to_string()];
+        }
+
+        let location = resolve_ambient_definition_location(&backend, "INDEX")
+            .await
+            .expect("ambient definition");
+
+        assert_eq!(
+            location.uri,
+            tower_lsp::lsp_types::Url::from_file_path(&ambient).expect("ambient uri")
+        );
+        assert_eq!(location.range.start.line, 4);
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

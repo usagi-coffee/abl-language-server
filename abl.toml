@@ -1,2 +1,3 @@
-propath = ['./playground', './playground/propath']
+ambient = ['./playground/ambient/docs.i']
 dumpfile = ['./playground/schema.df']
+propath = ['./playground', './playground/propath']

@@ -39,6 +39,23 @@ pub fn symbol_at_offset(root: Node<'_>, text: &str, offset: usize) -> Option<Str
     None
 }
 
+pub fn is_comment_offset(root: Node<'_>, offset: usize) -> bool {
+    let Some(mut node) = root.descendant_for_byte_range(offset, offset) else {
+        return false;
+    };
+
+    loop {
+        if matches!(node.kind(), "comment" | "block_comment" | "line_comment") {
+            return true;
+        }
+
+        let Some(parent) = node.parent() else {
+            return false;
+        };
+        node = parent;
+    }
+}
+
 pub fn markdown_hover(markdown: String) -> Hover {
     Hover {
         contents: HoverContents::Markup(MarkupContent {
@@ -54,12 +71,53 @@ pub fn function_signature_hover(sig: &FunctionSignature) -> Hover {
         Some(ref ret) => format!(
             "`FUNCTION {}({}) RETURNS {}`",
             sig.name,
-            sig.params.join(", "),
+            sig.parameters
+                .iter()
+                .map(|param| param.label.as_str())
+                .collect::<Vec<_>>()
+                .join(", "),
             ret
         ),
-        None => format!("`FUNCTION {}({})`", sig.name, sig.params.join(", ")),
+        None => format!(
+            "`FUNCTION {}({})`",
+            sig.name,
+            sig.parameters
+                .iter()
+                .map(|param| param.label.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
     };
-    markdown_hover(header)
+
+    let mut sections = vec![header];
+    if let Some(description) = &sig.documentation.description {
+        sections.push(description.clone());
+    }
+    if sig
+        .parameters
+        .iter()
+        .any(|param| param.documentation.is_some())
+    {
+        let params = sig
+            .parameters
+            .iter()
+            .filter_map(|param| {
+                param
+                    .documentation
+                    .as_ref()
+                    .map(|doc| format!("- `{}`: {}", param.name, doc))
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !params.is_empty() {
+            sections.push(format!("**Parameters**\n{params}"));
+        }
+    }
+    if let Some(returns) = &sig.documentation.returns {
+        sections.push(format!("**Returns**\n{returns}"));
+    }
+
+    markdown_hover(sections.join("\n\n"))
 }
 
 pub fn find_db_field_matches(
@@ -280,6 +338,15 @@ DEFINE TEMP-TABLE ZM_CENY NO-UNDO
         assert_eq!(qualified.0, "TTCUSTOMER");
         assert_eq!(qualified.1, "NAME");
         assert_eq!(qualified.2, "name");
+    }
+
+    #[test]
+    fn detects_offsets_inside_comments() {
+        let src = "/* comment with source-string */\nFUNCTION foo RETURNS INTEGER () FORWARD.\n";
+        let tree = parse_abl(src);
+        let offset = src.find("source-string").expect("comment text") + 2;
+
+        assert!(super::is_comment_offset(tree.root_node(), offset));
     }
 
     #[test]

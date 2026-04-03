@@ -1,4 +1,7 @@
-use tower_lsp::lsp_types::{ParameterInformation, ParameterLabel, SignatureInformation};
+use tower_lsp::lsp_types::{
+    Documentation, MarkupContent, MarkupKind, ParameterInformation, ParameterLabel,
+    SignatureInformation,
+};
 use tree_sitter::Node;
 
 use crate::analysis::functions::FunctionSignature;
@@ -13,26 +16,57 @@ pub fn call_context_at_offset(root: Node<'_>, src: &[u8], offset: usize) -> Opti
 }
 
 pub fn to_signature_information(sig: &FunctionSignature) -> SignatureInformation {
-    let params_text = sig.params.join(", ");
+    let params_text = sig
+        .parameters
+        .iter()
+        .map(|param| param.label.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
     let label = match sig.return_type.as_deref() {
         Some(ret) => format!("FUNCTION {}({}) RETURNS {}", sig.name, params_text, ret),
         None => format!("FUNCTION {}({})", sig.name, params_text),
     };
     let parameters = sig
-        .params
+        .parameters
         .iter()
-        .map(|p| ParameterInformation {
-            label: ParameterLabel::Simple(p.clone()),
-            documentation: None,
+        .map(|param| ParameterInformation {
+            label: ParameterLabel::Simple(param.label.clone()),
+            documentation: param
+                .documentation
+                .as_ref()
+                .map(|markdown| markdown_documentation(markdown)),
         })
         .collect::<Vec<_>>();
 
     SignatureInformation {
         label,
-        documentation: None,
+        documentation: signature_documentation(sig),
         parameters: Some(parameters),
         active_parameter: None,
     }
+}
+
+fn signature_documentation(sig: &FunctionSignature) -> Option<Documentation> {
+    let mut sections = Vec::new();
+    if let Some(description) = &sig.documentation.description {
+        sections.push(description.clone());
+    }
+    if let Some(returns) = &sig.documentation.returns {
+        sections.push(format!("**Returns**\n{returns}"));
+    }
+
+    if sections.is_empty() {
+        None
+    } else {
+        Some(markdown_documentation(&sections.join("\n\n")))
+    }
+}
+
+fn markdown_documentation(markdown: &str) -> Documentation {
+    Documentation::MarkupContent(MarkupContent {
+        kind: MarkupKind::Markdown,
+        value: markdown.to_string(),
+    })
 }
 
 fn call_context_from_tree(root: Node<'_>, src: &[u8], offset: usize) -> Option<CallContext> {
@@ -255,7 +289,7 @@ lv_counter = local_mul(1, 2).
         let tree = parse(src);
         let sig =
             find_function_signature(tree.root_node(), src.as_bytes(), "local_mul").expect("sig");
-        assert_eq!(sig.params.len(), 2);
+        assert_eq!(sig.parameters.len(), 2);
         assert_eq!(sig.return_type.as_deref(), Some("INTEGER"));
     }
 }

@@ -1,7 +1,10 @@
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::{SignatureHelp, SignatureHelpParams};
 
-use crate::analysis::functions::{find_function_signature, find_function_signature_from_includes};
+use crate::analysis::functions::{
+    find_function_signature, find_function_signature_from_ambient,
+    find_function_signature_from_includes,
+};
 use crate::analysis::signature::{call_context_at_offset, to_signature_information};
 use crate::backend::Backend;
 use crate::utils::position::lsp_pos_to_utf8_byte_offset;
@@ -45,15 +48,22 @@ impl Backend {
             .await
             {
                 Some(sig) => sig,
-                None => return Ok(None),
+                None => match find_function_signature_from_ambient(self, &call.name).await {
+                    Some(sig) => sig,
+                    None => return Ok(None),
+                },
             },
         };
 
         let sig_info = to_signature_information(&sig);
-        let active_param = if sig.params.is_empty() {
+        let active_param = if sig.parameters.is_empty() {
             None
         } else {
-            Some((call.active_param.min(sig.params.len().saturating_sub(1))) as u32)
+            Some(
+                (call
+                    .active_param
+                    .min(sig.parameters.len().saturating_sub(1))) as u32,
+            )
         };
 
         Ok(Some(SignatureHelp {

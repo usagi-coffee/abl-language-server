@@ -14,7 +14,7 @@ use tower_lsp::{Client, LanguageServer};
 use tree_sitter::{Language, Parser, Tree};
 
 use crate::config::{AblConfig, find_workspace_root, load_from_workspace_root};
-use crate::utils::paths::{resolve_dumpfile_path, resolve_include_path};
+use crate::utils::paths::{resolve_config_path, resolve_dumpfile_path, resolve_include_path};
 
 #[derive(Clone)]
 pub struct DbFieldInfo {
@@ -468,6 +468,15 @@ impl Backend {
             },
         );
         Some((text, include_tree))
+    }
+
+    pub async fn ambient_paths(&self) -> Vec<PathBuf> {
+        let workspace_root = self.workspace_root.lock().await.clone();
+        let ambient = self.config.lock().await.ambient.clone();
+        ambient
+            .into_iter()
+            .filter_map(|path| resolve_config_path(workspace_root.as_deref(), &path))
+            .collect()
     }
 
     pub fn invalidate_include_caches_for_uri(&self, uri: &Url) {

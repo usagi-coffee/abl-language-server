@@ -8,10 +8,13 @@ use crate::analysis::definition::{
     resolve_preprocessor_define_match,
 };
 use crate::analysis::definitions::collect_definition_symbols;
-use crate::analysis::functions::{find_function_signature, find_function_signature_from_includes};
+use crate::analysis::functions::{
+    find_function_signature, find_function_signature_from_ambient,
+    find_function_signature_from_includes,
+};
 use crate::analysis::hover::{
     find_db_field_matches, find_local_table_field_hover, find_local_table_field_hover_by_symbol,
-    function_signature_hover, markdown_hover, symbol_at_offset,
+    function_signature_hover, is_comment_offset, markdown_hover, symbol_at_offset,
 };
 use crate::analysis::includes::{
     collect_include_sites_from_tree, include_site_matches_file_offset,
@@ -42,6 +45,10 @@ impl Backend {
             Some(o) => o,
             None => return Ok(None),
         };
+
+        if is_comment_offset(tree.root_node(), offset) {
+            return Ok(None);
+        }
 
         if let Some(location) =
             resolve_include_directive_location(self, &uri, &text, tree.root_node(), offset).await
@@ -164,6 +171,9 @@ impl Backend {
         )
         .await
         {
+            return Ok(Some(function_signature_hover(&sig)));
+        }
+        if let Some(sig) = find_function_signature_from_ambient(self, &symbol).await {
             return Ok(Some(function_signature_hover(&sig)));
         }
 

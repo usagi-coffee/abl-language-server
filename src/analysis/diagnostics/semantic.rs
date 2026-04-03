@@ -20,6 +20,9 @@ use crate::analysis::diagnostics::symbols::{
     collect_local_table_field_symbols, collect_table_refs_for_unknown_table_diag,
     normalize_identifier_refs,
 };
+use crate::analysis::functions::{
+    collect_function_arities_from_ambient, collect_known_functions_from_ambient,
+};
 use crate::analysis::includes::{collect_include_sites_from_tree, resolve_include_site_path};
 use crate::backend::Backend;
 
@@ -64,6 +67,7 @@ pub async fn collect_function_call_arity_diags(
             );
         }
     }
+    collect_function_arities_from_ambient(backend, &mut signatures).await;
 
     if !is_latest_version(backend, uri, version) {
         return false;
@@ -143,6 +147,13 @@ pub async fn collect_unknown_symbol_diags(
             );
         }
     }
+
+    collect_known_functions_from_ambient(
+        backend,
+        &mut known_functions,
+        &mut known_function_signatures,
+    )
+    .await;
 
     known_functions.extend(known_function_signatures.into_keys());
 

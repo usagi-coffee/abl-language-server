@@ -3,9 +3,9 @@ use tower_lsp::lsp_types::*;
 
 use crate::analysis::completion::lookup_case_insensitive_indexes_by_table;
 use crate::analysis::definition::{
-    resolve_buffer_alias_table_location, resolve_include_definition_location,
-    resolve_include_directive_location, resolve_local_definition_location,
-    resolve_preprocessor_define_match,
+    resolve_ambient_definition_location, resolve_buffer_alias_table_location,
+    resolve_include_definition_location, resolve_include_directive_location,
+    resolve_local_definition_location, resolve_preprocessor_define_match,
 };
 use crate::analysis::schema::normalize_lookup_key;
 use crate::analysis::schema_lookup::lookup_schema_location;
@@ -109,6 +109,10 @@ impl Backend {
         )
         .await
         {
+            return Ok(Some(GotoDefinitionResponse::Scalar(location)));
+        }
+
+        if let Some(location) = resolve_ambient_definition_location(self, &symbol).await {
             return Ok(Some(GotoDefinitionResponse::Scalar(location)));
         }
 

@@ -14,6 +14,8 @@ pub struct AblConfig {
     pub semantic_tokens: SemanticTokensConfig,
     #[serde(default, deserialize_with = "deserialize_dumpfile")]
     pub dumpfile: Vec<String>,
+    #[serde(default, deserialize_with = "deserialize_string_or_vec")]
+    pub ambient: Vec<String>,
     #[serde(default, deserialize_with = "deserialize_propath")]
     pub propath: Vec<String>,
 }
@@ -166,6 +168,8 @@ struct PartialAblConfig {
     semantic_tokens: Option<PartialSemanticTokensConfig>,
     #[serde(default, deserialize_with = "deserialize_optional_string_or_vec")]
     dumpfile: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "deserialize_optional_string_or_vec")]
+    ambient: Option<Vec<String>>,
     #[serde(default, deserialize_with = "deserialize_optional_string_or_vec")]
     propath: Option<Vec<String>>,
 }
@@ -361,6 +365,10 @@ fn merge_partial_into(base: &mut AblConfig, partial: &PartialAblConfig, config_p
         base.dumpfile
             .extend(resolve_path_list_relative_to_config(config_path, dumpfile));
     }
+    if let Some(ambient) = &partial.ambient {
+        base.ambient
+            .extend(resolve_path_list_relative_to_config(config_path, ambient));
+    }
     if let Some(propath) = &partial.propath {
         for resolved in resolve_path_list_relative_to_config(config_path, propath) {
             push_unique_string_value(&mut base.propath, resolved);
@@ -465,12 +473,14 @@ mod tests {
         let cfg: AblConfig = toml::from_str(
             r#"
 dumpfile = "database.df"
+ambient = "ambient/docs.i"
 propath = "src/includes"
 "#,
         )
         .expect("parse config");
 
         assert_eq!(cfg.dumpfile, vec!["database.df"]);
+        assert_eq!(cfg.ambient, vec!["ambient/docs.i"]);
         assert_eq!(cfg.propath, vec!["src/includes"]);
     }
 
@@ -479,12 +489,14 @@ propath = "src/includes"
         let cfg: AblConfig = toml::from_str(
             r#"
 dumpfile = ["a.df", "b.df"]
+ambient = ["/global/docs.i", "relative/ambient.i"]
 propath = ["/global/a", "relative/includes"]
 "#,
         )
         .expect("parse config");
 
         assert_eq!(cfg.dumpfile, vec!["a.df", "b.df"]);
+        assert_eq!(cfg.ambient, vec!["/global/docs.i", "relative/ambient.i"]);
         assert_eq!(cfg.propath, vec!["/global/a", "relative/includes"]);
     }
 
@@ -555,6 +567,7 @@ ignore = "custom_func"
             &parent,
             r#"
 dumpfile = "parent.df"
+ambient = ["parent/ambient.i"]
 propath = ["parent/includes"]
 
 [completion]
@@ -575,6 +588,7 @@ ignore = ["PARENT-GLOBAL"]
             r#"
 inherits = "base.toml"
 dumpfile = ["child.df"]
+ambient = ["child/ambient.i"]
 propath = ["child/includes"]
 
 [diagnostics.unknown_variables]
@@ -615,6 +629,23 @@ ignore = ["CHILD-GLOBAL"]
                     .parent()
                     .expect("child dir")
                     .join("child.df")
+                    .to_string_lossy()
+                    .to_string(),
+            ]
+        );
+        assert_eq!(
+            loaded.config.ambient,
+            vec![
+                parent
+                    .parent()
+                    .expect("parent dir")
+                    .join("parent/ambient.i")
+                    .to_string_lossy()
+                    .to_string(),
+                child
+                    .parent()
+                    .expect("child dir")
+                    .join("child/ambient.i")
                     .to_string_lossy()
                     .to_string(),
             ]
