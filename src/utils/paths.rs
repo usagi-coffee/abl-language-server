@@ -2,8 +2,71 @@ use std::path::{Path, PathBuf};
 
 use tower_lsp::lsp_types::Url;
 
-pub fn resolve_dumpfile_path(workspace_root: Option<&Path>, dumpfile: &str) -> Option<PathBuf> {
-    resolve_config_path(workspace_root, dumpfile)
+pub fn expand_dumpfile_pattern(workspace_root: Option<&Path>, dumpfile: &str) -> Vec<PathBuf> {
+    let Some(base) = resolve_config_path(workspace_root, dumpfile) else {
+        return Vec::new();
+    };
+
+    if !dumpfile.contains('*') {
+        return if base.exists() {
+            vec![base]
+        } else {
+            Vec::new()
+        };
+    }
+
+    let normalized = normalize_path_for_match(&base.to_string_lossy());
+    let search_root = glob_search_root(&base);
+    let mut matches = Vec::new();
+    collect_dumpfile_matches(&search_root, &normalized, &mut matches);
+    matches.sort();
+    matches.dedup();
+    matches
+}
+
+fn collect_dumpfile_matches(root: &Path, pattern: &str, out: &mut Vec<PathBuf>) {
+    let Ok(read_dir) = std::fs::read_dir(root) else {
+        return;
+    };
+
+    for entry in read_dir.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_dumpfile_matches(&path, pattern, out);
+            continue;
+        }
+
+        let normalized = normalize_path_for_match(path.to_string_lossy().as_ref());
+        if wildcard_match(pattern, &normalized) {
+            out.push(path);
+        }
+    }
+}
+
+fn glob_search_root(pattern: &Path) -> PathBuf {
+    let pattern_str = pattern.to_string_lossy();
+    let Some(idx) = pattern_str.find('*') else {
+        return pattern
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| pattern.to_path_buf());
+    };
+
+    let prefix = &pattern_str[..idx];
+    let prefix_path = PathBuf::from(prefix);
+    if prefix_path.as_os_str().is_empty() {
+        pattern
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."))
+    } else if prefix.ends_with(['/', '\\']) {
+        prefix_path
+    } else {
+        prefix_path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or(prefix_path)
+    }
 }
 
 pub fn resolve_include_path(
@@ -50,6 +113,24 @@ pub fn resolve_config_path(workspace_root: Option<&Path>, value: &str) -> Option
         return Some(candidate);
     }
     workspace_root.map(|root| root.join(candidate))
+}
+
+pub fn resolve_glob_pattern(
+    workspace_root: Option<&Path>,
+    value: &str,
+) -> Option<(PathBuf, String)> {
+    let candidate = PathBuf::from(value);
+    if candidate.is_absolute() {
+        let parent = candidate.parent()?.to_path_buf();
+        let file_name = candidate.file_name()?.to_string_lossy().to_string();
+        return Some((parent, file_name));
+    }
+
+    let root = workspace_root?;
+    let joined = root.join(candidate);
+    let parent = joined.parent()?.to_path_buf();
+    let file_name = joined.file_name()?.to_string_lossy().to_string();
+    Some((parent, file_name))
 }
 
 pub fn uri_matches_any_path_pattern(
@@ -130,8 +211,12 @@ pub fn wildcard_match(pattern: &str, text: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{path_matches_any_pattern, resolve_include_path, wildcard_match};
+    use super::{
+        expand_dumpfile_pattern, path_matches_any_pattern, resolve_glob_pattern,
+        resolve_include_path, wildcard_match,
+    };
     use std::fs;
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn include_resolution_uses_propath_order() {
@@ -237,6 +322,40 @@ mod tests {
             Some(&workspace),
             &["special.p".to_string()]
         ));
+
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn resolve_glob_pattern_keeps_parent_directory_and_filename_pattern() {
+        let workspace = Path::new("/workspace");
+        let (parent, file_name) =
+            resolve_glob_pattern(Some(workspace), "ambient/*.i").expect("glob pattern");
+        assert_eq!(parent, PathBuf::from("/workspace/ambient"));
+        assert_eq!(file_name, "*.i");
+    }
+
+    #[test]
+    fn expand_dumpfile_pattern_matches_files() {
+        let base = std::env::temp_dir().join(format!(
+            "abl_ls_dumpfile_glob_test_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("epoch")
+                .as_nanos()
+        ));
+        let dumps = base.join("dumps");
+        fs::create_dir_all(&dumps).expect("create dumps");
+        let a = dumps.join("a.df");
+        let b = dumps.join("b.df");
+        let c = dumps.join("c.txt");
+        fs::write(&a, "").expect("write a");
+        fs::write(&b, "").expect("write b");
+        fs::write(&c, "").expect("write c");
+
+        let mut resolved = expand_dumpfile_pattern(Some(&base), "dumps/*.df");
+        resolved.sort();
+        assert_eq!(resolved, vec![a, b]);
 
         let _ = fs::remove_dir_all(&base);
     }

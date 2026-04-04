@@ -14,7 +14,9 @@ use tower_lsp::{Client, LanguageServer};
 use tree_sitter::{Language, Parser, Tree};
 
 use crate::config::{AblConfig, find_workspace_root, load_from_workspace_root};
-use crate::utils::paths::{resolve_config_path, resolve_dumpfile_path, resolve_include_path};
+use crate::utils::paths::{
+    expand_dumpfile_pattern, resolve_config_path, resolve_glob_pattern, resolve_include_path,
+};
 
 #[derive(Clone)]
 pub struct DbFieldInfo {
@@ -473,10 +475,40 @@ impl Backend {
     pub async fn ambient_paths(&self) -> Vec<PathBuf> {
         let workspace_root = self.workspace_root.lock().await.clone();
         let ambient = self.config.lock().await.ambient.clone();
-        ambient
-            .into_iter()
-            .filter_map(|path| resolve_config_path(workspace_root.as_deref(), &path))
-            .collect()
+        let mut out = Vec::new();
+
+        for entry in ambient {
+            if entry.contains('*') {
+                let Some((parent, file_name_pattern)) =
+                    resolve_glob_pattern(workspace_root.as_deref(), &entry)
+                else {
+                    continue;
+                };
+                let Ok(read_dir) = std::fs::read_dir(&parent) else {
+                    continue;
+                };
+                let mut matches = read_dir
+                    .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+                    .filter(|path| {
+                        path.file_name()
+                            .and_then(|name| name.to_str())
+                            .map(|name| {
+                                crate::utils::paths::wildcard_match(&file_name_pattern, name)
+                            })
+                            .unwrap_or(false)
+                    })
+                    .filter(|path| path.is_file())
+                    .collect::<Vec<_>>();
+                matches.sort();
+                out.extend(matches);
+            } else if let Some(path) = resolve_config_path(workspace_root.as_deref(), &entry) {
+                out.push(path);
+            }
+        }
+
+        out.sort();
+        out.dedup();
+        out
     }
 
     pub fn invalidate_include_caches_for_uri(&self, uri: &Url) {
@@ -498,10 +530,13 @@ impl Backend {
         let mut indexes_by_table = HashMap::<String, Vec<String>>::new();
         let mut index_fields_by_table_index = HashMap::<String, Vec<String>>::new();
         let mut fields_by_table = HashMap::<String, Vec<DbFieldInfo>>::new();
+        let mut resolved_dumpfiles = Vec::<PathBuf>::new();
         for dumpfile in dumpfiles {
-            let Some(path) = resolve_dumpfile_path(workspace_root, dumpfile) else {
-                continue;
-            };
+            resolved_dumpfiles.extend(expand_dumpfile_pattern(workspace_root, dumpfile));
+        }
+        resolved_dumpfiles.sort();
+        resolved_dumpfiles.dedup();
+        for path in resolved_dumpfiles {
             let Ok(contents) = tokio::fs::read_to_string(&path).await else {
                 continue;
             };
@@ -703,11 +738,10 @@ impl Backend {
 
         let workspace_root = self.workspace_root.lock().await.clone();
         let dumpfiles = self.config.lock().await.dumpfile.clone();
-        dumpfiles.iter().any(|dumpfile| {
-            resolve_dumpfile_path(workspace_root.as_deref(), dumpfile)
-                .map(|p| p == uri_path)
-                .unwrap_or(false)
-        })
+        dumpfiles
+            .iter()
+            .flat_map(|dumpfile| expand_dumpfile_pattern(workspace_root.as_deref(), dumpfile))
+            .any(|path| path == uri_path)
     }
 }
 
@@ -716,4 +750,82 @@ fn is_abl_toml_uri(uri: &Url) -> bool {
         .ok()
         .and_then(|path| path.file_name().map(|name| name == "abl.toml"))
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Backend, BackendState};
+    use crate::config::AblConfig;
+    use dashmap::{DashMap, DashSet};
+    use std::sync::Arc;
+    use tokio::sync::Mutex as AsyncMutex;
+    use tower_lsp::{Client, LspService};
+
+    fn test_backend() -> Backend {
+        let (service, _socket) = LspService::build(|client: Client| Backend {
+            client,
+            state: Arc::new(BackendState {
+                abl_language: tree_sitter_abl::LANGUAGE.into(),
+                df_parser: AsyncMutex::new({
+                    let mut p = tree_sitter::Parser::new();
+                    p.set_language(&tree_sitter_df::LANGUAGE.into())
+                        .expect("set df language");
+                    p
+                }),
+                documents: DashMap::new(),
+                workspace_root: AsyncMutex::new(None),
+                config: AsyncMutex::new(AblConfig::default()),
+                db_tables: DashSet::new(),
+                db_sequences: DashSet::new(),
+                db_table_labels: DashMap::new(),
+                db_table_definitions: DashMap::new(),
+                db_sequence_definitions: DashMap::new(),
+                db_field_definitions: DashMap::new(),
+                db_index_definitions: DashMap::new(),
+                db_indexes_by_table: DashMap::new(),
+                db_index_fields_by_table_index: DashMap::new(),
+                db_fields_by_table: DashMap::new(),
+                include_completion_cache: DashMap::new(),
+                include_parse_cache: DashMap::new(),
+            }),
+        })
+        .finish();
+        let backend = service.inner().clone();
+        drop(service);
+        backend
+    }
+
+    #[tokio::test]
+    async fn ambient_paths_expand_globs() {
+        let base = std::env::temp_dir().join(format!(
+            "abl_ls_ambient_glob_test_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("epoch")
+                .as_nanos()
+        ));
+        let ambient_dir = base.join("ambient");
+        std::fs::create_dir_all(&ambient_dir).expect("create ambient dir");
+        std::fs::write(ambient_dir.join("a.i"), "/* a */").expect("write a");
+        std::fs::write(ambient_dir.join("b.i"), "/* b */").expect("write b");
+        std::fs::write(ambient_dir.join("c.p"), "/* c */").expect("write c");
+
+        let backend = test_backend();
+        {
+            let mut workspace_root = backend.workspace_root.lock().await;
+            *workspace_root = Some(base.clone());
+        }
+        {
+            let mut config = backend.config.lock().await;
+            config.ambient = vec!["ambient/*.i".to_string()];
+        }
+
+        let paths = backend.ambient_paths().await;
+        assert_eq!(
+            paths,
+            vec![ambient_dir.join("a.i"), ambient_dir.join("b.i")]
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }
