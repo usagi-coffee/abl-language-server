@@ -1,4 +1,7 @@
 use crate::analysis::buffers::collect_buffer_mappings;
+use crate::analysis::completion_support::{
+    is_parameter_symbol_at_byte, symbol_is_in_current_scope,
+};
 use crate::analysis::definitions::{
     AblDefinitionSite, PreprocessorDefineSite, collect_definition_sites,
     collect_global_preprocessor_define_sites, collect_local_table_field_sites,
@@ -41,15 +44,22 @@ fn collect_function_definition_sites(node: Node<'_>, src: &[u8], out: &mut Vec<A
 }
 
 fn best_local_definition_site(
+    root: Node<'_>,
     sites: Vec<AblDefinitionSite>,
     symbol: &str,
     offset: usize,
 ) -> Option<Range> {
+    let current_scope = containing_scope(root, offset);
     let mut best_before: Option<(usize, Range)> = None;
     let mut best_after: Option<(usize, Range)> = None;
 
     for site in sites {
         if !site.label.eq_ignore_ascii_case(symbol) {
+            continue;
+        }
+        if is_parameter_symbol_at_byte(root, site.start_byte)
+            && !symbol_is_in_current_scope(root, site.start_byte, current_scope)
+        {
             continue;
         }
 
@@ -230,7 +240,7 @@ pub fn resolve_local_definition_location(
     let mut sites = Vec::new();
     collect_definition_sites(root, src, &mut sites);
     collect_local_table_field_sites(root, src, &mut sites);
-    best_local_definition_site(sites, symbol, offset).map(|range| Location {
+    best_local_definition_site(root, sites, symbol, offset).map(|range| Location {
         uri: uri.clone(),
         range,
     })
@@ -245,7 +255,7 @@ pub fn resolve_local_function_definition_location(
 ) -> Option<Location> {
     let mut sites = Vec::new();
     collect_function_definition_sites(root, src, &mut sites);
-    best_local_definition_site(sites, symbol, offset).map(|range| Location {
+    best_local_definition_site(root, sites, symbol, offset).map(|range| Location {
         uri: uri.clone(),
         range,
     })
@@ -300,6 +310,9 @@ pub async fn resolve_include_definition_location(
                 include_text.as_bytes(),
                 &mut sites,
             );
+            sites.retain(|site| {
+                !is_parameter_symbol_at_byte(include_tree.root_node(), site.start_byte)
+            });
             parsed_include_defs.insert(include_path.clone(), sites);
 
             let mut include_global_defines = Vec::new();
@@ -481,6 +494,7 @@ pub async fn resolve_ambient_definition_location(
 
         let Some(site) = sites
             .iter()
+            .filter(|site| !is_parameter_symbol_at_byte(ambient_tree.root_node(), site.start_byte))
             .find(|site| site.label.eq_ignore_ascii_case(symbol))
         else {
             continue;
@@ -787,6 +801,42 @@ DEFINE VARIABLE x AS INTEGER NO-UNDO.
                 .expect("location");
         assert_eq!(location.uri, uri);
         assert_eq!(location.range.start.line, 1);
+    }
+
+    #[test]
+    fn resolves_parameter_only_within_same_function_scope() {
+        let src = r#"
+FUNCTION foo RETURNS INTEGER (INPUT p_value AS INTEGER):
+  RETURN p_value.
+END FUNCTION.
+
+DEFINE VARIABLE result AS INTEGER NO-UNDO.
+result = p_value.
+"#;
+        let tree = parse_abl(src);
+        let uri = tower_lsp::lsp_types::Url::parse("file:///tmp/test.p").expect("uri");
+
+        let inside_offset = src.find("RETURN p_value").expect("inside usage") + "RETURN ".len();
+        let inside_location = resolve_local_definition_location(
+            &uri,
+            tree.root_node(),
+            src.as_bytes(),
+            "p_value",
+            inside_offset,
+        )
+        .expect("parameter location inside function");
+        assert_eq!(inside_location.uri, uri);
+        assert_eq!(inside_location.range.start.line, 1);
+
+        let outside_offset = src.rfind("p_value").expect("outside usage");
+        let outside_location = resolve_local_definition_location(
+            &uri,
+            tree.root_node(),
+            src.as_bytes(),
+            "p_value",
+            outside_offset,
+        );
+        assert!(outside_location.is_none());
     }
 
     #[test]
