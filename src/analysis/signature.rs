@@ -11,6 +11,46 @@ pub struct CallContext {
     pub active_param: usize,
 }
 
+pub fn function_call_name_at_offset(root: Node<'_>, src: &[u8], offset: usize) -> Option<String> {
+    if src.is_empty() {
+        return None;
+    }
+
+    let mut probes = Vec::with_capacity(2);
+    let clamped = offset.min(src.len().saturating_sub(1));
+    probes.push(clamped);
+    if clamped > 0 {
+        probes.push(clamped - 1);
+    }
+
+    for probe in probes {
+        let Some(mut node) = root.named_descendant_for_byte_range(probe, probe) else {
+            continue;
+        };
+
+        loop {
+            if node.kind() == "function_call"
+                && let Some(function) = node.child_by_field_name("function")
+                && probe >= function.start_byte()
+                && probe < function.end_byte()
+                && let Ok(name) = function.utf8_text(src)
+            {
+                let trimmed = name.trim();
+                if !trimmed.is_empty() {
+                    return Some(trimmed.to_string());
+                }
+            }
+
+            let Some(parent) = node.parent() else {
+                break;
+            };
+            node = parent;
+        }
+    }
+
+    None
+}
+
 pub fn call_context_at_offset(root: Node<'_>, src: &[u8], offset: usize) -> Option<CallContext> {
     call_context_from_tree(root, src, offset).or_else(|| call_context_from_text(src, offset))
 }
@@ -227,7 +267,9 @@ fn count_active_argument_index(
 
 #[cfg(test)]
 mod tests {
-    use super::{call_context_at_offset, count_active_argument_index};
+    use super::{
+        call_context_at_offset, count_active_argument_index, function_call_name_at_offset,
+    };
     use crate::analysis::functions::find_function_signature;
     use crate::analysis::parse_abl;
 
@@ -291,5 +333,15 @@ lv_counter = local_mul(1, 2).
             find_function_signature(tree.root_node(), src.as_bytes(), "local_mul").expect("sig");
         assert_eq!(sig.parameters.len(), 2);
         assert_eq!(sig.return_type.as_deref(), Some("INTEGER"));
+    }
+
+    #[test]
+    fn detects_function_call_name_when_cursor_is_on_function_identifier() {
+        let src = "lv_counter = INDEX(\"banana\", \"na\").";
+        let tree = parse(src);
+        let offset = src.find("INDEX").expect("offset") + 2;
+        let name =
+            function_call_name_at_offset(tree.root_node(), src.as_bytes(), offset).expect("name");
+        assert_eq!(name, "INDEX");
     }
 }

@@ -3,12 +3,15 @@ use tower_lsp::lsp_types::*;
 
 use crate::analysis::completion::lookup_case_insensitive_indexes_by_table;
 use crate::analysis::definition::{
-    resolve_ambient_definition_location, resolve_buffer_alias_table_location,
-    resolve_include_definition_location, resolve_include_directive_location,
-    resolve_local_definition_location, resolve_preprocessor_define_match,
+    resolve_ambient_definition_location, resolve_ambient_function_definition_location,
+    resolve_buffer_alias_table_location, resolve_include_definition_location,
+    resolve_include_directive_location, resolve_include_function_definition_location,
+    resolve_local_definition_location, resolve_local_function_definition_location,
+    resolve_preprocessor_define_match,
 };
 use crate::analysis::schema::normalize_lookup_key;
 use crate::analysis::schema_lookup::lookup_schema_location;
+use crate::analysis::signature::function_call_name_at_offset;
 use crate::backend::Backend;
 use crate::utils::position::{
     ascii_ident_at_or_before, ascii_ident_or_dash_at_or_before, lsp_pos_to_utf8_byte_offset,
@@ -56,6 +59,39 @@ impl Backend {
             resolve_include_directive_location(self, &uri, &text, tree.root_node(), offset).await
         {
             return Ok(Some(GotoDefinitionResponse::Scalar(location)));
+        }
+
+        if let Some(function_name) =
+            function_call_name_at_offset(tree.root_node(), text.as_bytes(), offset)
+        {
+            if let Some(location) = resolve_local_function_definition_location(
+                &uri,
+                tree.root_node(),
+                text.as_bytes(),
+                &function_name,
+                offset,
+            ) {
+                return Ok(Some(GotoDefinitionResponse::Scalar(location)));
+            }
+
+            if let Some(location) = resolve_include_function_definition_location(
+                self,
+                &uri,
+                &text,
+                tree.root_node(),
+                &function_name,
+                offset,
+            )
+            .await
+            {
+                return Ok(Some(GotoDefinitionResponse::Scalar(location)));
+            }
+
+            if let Some(location) =
+                resolve_ambient_function_definition_location(self, &function_name).await
+            {
+                return Ok(Some(GotoDefinitionResponse::Scalar(location)));
+            }
         }
 
         let symbol = match ascii_ident_or_dash_at_or_before(&text, offset)

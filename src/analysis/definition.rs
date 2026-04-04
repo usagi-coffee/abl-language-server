@@ -16,6 +16,65 @@ use std::path::PathBuf;
 use tower_lsp::lsp_types::{Location, Position, Range, Url};
 use tree_sitter::Node;
 
+fn collect_function_definition_sites(node: Node<'_>, src: &[u8], out: &mut Vec<AblDefinitionSite>) {
+    if matches!(
+        node.kind(),
+        "function_definition" | "function_forward_definition"
+    ) && let Some(name) = node.child_by_field_name("name")
+        && let Ok(label) = name.utf8_text(src)
+    {
+        let trimmed = label.trim();
+        if !trimmed.is_empty() {
+            out.push(AblDefinitionSite {
+                label: trimmed.to_string(),
+                range: crate::utils::ts::node_to_range(name),
+                start_byte: name.start_byte(),
+            });
+        }
+    }
+
+    for i in 0..node.child_count() {
+        if let Some(ch) = node.child(i as u32) {
+            collect_function_definition_sites(ch, src, out);
+        }
+    }
+}
+
+fn best_local_definition_site(
+    sites: Vec<AblDefinitionSite>,
+    symbol: &str,
+    offset: usize,
+) -> Option<Range> {
+    let mut best_before: Option<(usize, Range)> = None;
+    let mut best_after: Option<(usize, Range)> = None;
+
+    for site in sites {
+        if !site.label.eq_ignore_ascii_case(symbol) {
+            continue;
+        }
+
+        if site.start_byte <= offset {
+            let should_take = best_before
+                .as_ref()
+                .map(|(start, _)| site.start_byte > *start)
+                .unwrap_or(true);
+            if should_take {
+                best_before = Some((site.start_byte, site.range));
+            }
+        } else {
+            let should_take = best_after
+                .as_ref()
+                .map(|(start, _)| site.start_byte < *start)
+                .unwrap_or(true);
+            if should_take {
+                best_after = Some((site.start_byte, site.range));
+            }
+        }
+    }
+
+    best_before.or(best_after).map(|(_, range)| range)
+}
+
 pub async fn resolve_include_directive_location(
     backend: &Backend,
     uri: &Url,
@@ -171,35 +230,22 @@ pub fn resolve_local_definition_location(
     let mut sites = Vec::new();
     collect_definition_sites(root, src, &mut sites);
     collect_local_table_field_sites(root, src, &mut sites);
+    best_local_definition_site(sites, symbol, offset).map(|range| Location {
+        uri: uri.clone(),
+        range,
+    })
+}
 
-    let mut best_before: Option<(usize, Range)> = None;
-    let mut best_after: Option<(usize, Range)> = None;
-
-    for site in sites {
-        if !site.label.eq_ignore_ascii_case(symbol) {
-            continue;
-        }
-
-        if site.start_byte <= offset {
-            let should_take = best_before
-                .as_ref()
-                .map(|(start, _)| site.start_byte > *start)
-                .unwrap_or(true);
-            if should_take {
-                best_before = Some((site.start_byte, site.range));
-            }
-        } else {
-            let should_take = best_after
-                .as_ref()
-                .map(|(start, _)| site.start_byte < *start)
-                .unwrap_or(true);
-            if should_take {
-                best_after = Some((site.start_byte, site.range));
-            }
-        }
-    }
-
-    best_before.or(best_after).map(|(_, range)| Location {
+pub fn resolve_local_function_definition_location(
+    uri: &Url,
+    root: Node<'_>,
+    src: &[u8],
+    symbol: &str,
+    offset: usize,
+) -> Option<Location> {
+    let mut sites = Vec::new();
+    collect_function_definition_sites(root, src, &mut sites);
+    best_local_definition_site(sites, symbol, offset).map(|range| Location {
         uri: uri.clone(),
         range,
     })
@@ -310,6 +356,106 @@ pub async fn resolve_include_definition_location(
         .map(|(_, location)| location)
 }
 
+pub async fn resolve_include_function_definition_location(
+    backend: &Backend,
+    uri: &Url,
+    text: &str,
+    root: Node<'_>,
+    symbol: &str,
+    offset: usize,
+) -> Option<Location> {
+    let scope = containing_scope(root, offset)?;
+    let current_path = uri.to_file_path().ok()?;
+    let include_sites = collect_include_sites_from_tree(root, text.as_bytes());
+    let mut available_define_sites = Vec::new();
+    collect_preprocessor_define_sites(root, text.as_bytes(), &mut available_define_sites);
+
+    let mut parsed_include_defs: HashMap<PathBuf, Vec<AblDefinitionSite>> = HashMap::new();
+    let mut include_before: Option<(usize, Location)> = None;
+    let mut include_after: Option<(usize, Location)> = None;
+
+    for include in include_sites {
+        if include.start_offset < scope.start || include.start_offset > scope.end {
+            continue;
+        }
+
+        let include_path_value = resolve_include_site_path(&include, &available_define_sites);
+        let Some(include_path) = backend
+            .resolve_include_path_for(&current_path, &include_path_value)
+            .await
+        else {
+            continue;
+        };
+
+        if !parsed_include_defs.contains_key(&include_path) {
+            let Some((include_text, include_tree)) =
+                backend.get_cached_include_parse(&include_path).await
+            else {
+                continue;
+            };
+
+            let mut sites = Vec::new();
+            collect_function_definition_sites(
+                include_tree.root_node(),
+                include_text.as_bytes(),
+                &mut sites,
+            );
+            parsed_include_defs.insert(include_path.clone(), sites);
+
+            let mut include_global_defines = Vec::new();
+            collect_global_preprocessor_define_sites(
+                include_tree.root_node(),
+                include_text.as_bytes(),
+                &mut include_global_defines,
+            );
+            for mut define in include_global_defines {
+                define.start_byte = include.start_offset;
+                available_define_sites.push(define);
+            }
+        }
+
+        let Some(def_sites) = parsed_include_defs.get(&include_path) else {
+            continue;
+        };
+        let Some(include_uri) = Url::from_file_path(&include_path).ok() else {
+            continue;
+        };
+
+        for site in def_sites {
+            if !site.label.eq_ignore_ascii_case(symbol) {
+                continue;
+            }
+
+            let location = Location {
+                uri: include_uri.clone(),
+                range: site.range,
+            };
+
+            if include.start_offset <= offset {
+                let should_take = include_before
+                    .as_ref()
+                    .map(|(site_offset, _)| include.start_offset > *site_offset)
+                    .unwrap_or(true);
+                if should_take {
+                    include_before = Some((include.start_offset, location));
+                }
+            } else {
+                let should_take = include_after
+                    .as_ref()
+                    .map(|(site_offset, _)| include.start_offset < *site_offset)
+                    .unwrap_or(true);
+                if should_take {
+                    include_after = Some((include.start_offset, location));
+                }
+            }
+        }
+    }
+
+    include_before
+        .or(include_after)
+        .map(|(_, location)| location)
+}
+
 pub async fn resolve_ambient_definition_location(
     backend: &Backend,
     symbol: &str,
@@ -328,6 +474,43 @@ pub async fn resolve_ambient_definition_location(
             &mut sites,
         );
         collect_local_table_field_sites(
+            ambient_tree.root_node(),
+            ambient_text.as_bytes(),
+            &mut sites,
+        );
+
+        let Some(site) = sites
+            .iter()
+            .find(|site| site.label.eq_ignore_ascii_case(symbol))
+        else {
+            continue;
+        };
+        let Some(uri) = Url::from_file_path(&ambient_path).ok() else {
+            continue;
+        };
+
+        return Some(Location {
+            uri,
+            range: site.range,
+        });
+    }
+
+    None
+}
+
+pub async fn resolve_ambient_function_definition_location(
+    backend: &Backend,
+    symbol: &str,
+) -> Option<Location> {
+    for ambient_path in backend.ambient_paths().await {
+        let Some((ambient_text, ambient_tree)) =
+            backend.get_cached_include_parse(&ambient_path).await
+        else {
+            continue;
+        };
+
+        let mut sites = Vec::new();
+        collect_function_definition_sites(
             ambient_tree.root_node(),
             ambient_text.as_bytes(),
             &mut sites,
@@ -513,7 +696,8 @@ fn pick_best_preprocessor_site<'a>(
 mod tests {
     use super::{
         pick_best_preprocessor_site, resolve_ambient_definition_location,
-        resolve_buffer_alias_table_location, resolve_local_definition_location,
+        resolve_ambient_function_definition_location, resolve_buffer_alias_table_location,
+        resolve_local_definition_location,
     };
     use crate::analysis::definitions::PreprocessorDefineSite;
     use crate::analysis::parse_abl;
@@ -676,6 +860,54 @@ FUNCTION INDEX RETURNS INTEGER (
             tower_lsp::lsp_types::Url::from_file_path(&ambient).expect("ambient uri")
         );
         assert_eq!(location.range.start.line, 4);
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[tokio::test]
+    async fn resolves_ambient_function_definition_instead_of_matching_parameter() {
+        let base = std::env::temp_dir().join(format!(
+            "abl_ls_ambient_function_definition_test_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("epoch")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&base).expect("create temp dir");
+        let ambient = base.join("docs.i");
+        std::fs::write(
+            &ambient,
+            r#"
+FUNCTION DYNAMIC-PROPERTY RETURNS CHARACTER (
+ object-reference AS Progress.Lang.Object,
+ property-name AS CHARACTER,
+ index AS INTEGER
+ ) FORWARD.
+
+FUNCTION INDEX RETURNS INTEGER (
+    source-string AS CHARACTER,
+    target-string AS CHARACTER
+  ) FORWARD.
+"#,
+        )
+        .expect("write ambient");
+
+        let backend = test_backend();
+        {
+            let mut config = backend.config.lock().await;
+            config.ambient.paths = vec![ambient.to_string_lossy().to_string()];
+            config.ambient.builtin = false;
+        }
+
+        let location = resolve_ambient_function_definition_location(&backend, "INDEX")
+            .await
+            .expect("ambient function definition");
+
+        assert_eq!(
+            location.uri,
+            tower_lsp::lsp_types::Url::from_file_path(&ambient).expect("ambient uri")
+        );
+        assert_eq!(location.range.start.line, 7);
 
         let _ = std::fs::remove_dir_all(&base);
     }
