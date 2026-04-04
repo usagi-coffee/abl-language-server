@@ -38,7 +38,7 @@ pub struct FunctionSignature {
 pub fn find_function_signature(root: Node, src: &[u8], symbol: &str) -> Option<FunctionSignature> {
     let mut matches = Vec::new();
     collect_function_signatures(root, src, symbol, &mut matches);
-    matches.into_iter().max_by_key(signature_score)
+    select_function_signature(matches)
 }
 
 fn collect_function_signatures(
@@ -217,6 +217,81 @@ fn signature_score(sig: &FunctionSignature) -> (usize, usize, usize, usize) {
         usize::from(sig.documentation.description.is_some() || sig.documentation.returns.is_some()),
         usize::from(!sig.is_forward),
     )
+}
+
+fn documentation_score(sig: &FunctionSignature) -> (usize, usize) {
+    (
+        usize::from(sig.documentation.has_docs()),
+        sig.parameters
+            .iter()
+            .filter(|param| param.documentation.is_some())
+            .count(),
+    )
+}
+
+fn select_function_signature(matches: Vec<FunctionSignature>) -> Option<FunctionSignature> {
+    let winner_index = matches
+        .iter()
+        .enumerate()
+        .max_by_key(|(_, sig)| signature_score(sig))
+        .map(|(idx, _)| idx)?;
+    let mut winner = matches[winner_index].clone();
+
+    if winner.documentation.has_docs()
+        || winner
+            .parameters
+            .iter()
+            .any(|param| param.documentation.is_some())
+    {
+        return Some(winner);
+    }
+
+    let donor = matches
+        .iter()
+        .enumerate()
+        .filter(|(idx, sig)| *idx != winner_index && has_any_docs(sig))
+        .max_by_key(|(_, sig)| (documentation_score(sig), signature_score(sig)))
+        .map(|(_, sig)| sig);
+
+    if let Some(donor) = donor {
+        inherit_documentation(&mut winner, donor);
+    }
+    Some(winner)
+}
+
+fn has_any_docs(sig: &FunctionSignature) -> bool {
+    sig.documentation.has_docs()
+        || sig
+            .parameters
+            .iter()
+            .any(|param| param.documentation.is_some())
+}
+
+fn inherit_documentation(target: &mut FunctionSignature, donor: &FunctionSignature) {
+    target.documentation = donor.documentation.clone();
+
+    let docs_by_name = donor
+        .parameters
+        .iter()
+        .filter_map(|param| {
+            param
+                .documentation
+                .as_ref()
+                .map(|doc| (param.name.to_ascii_uppercase(), doc.clone()))
+        })
+        .collect::<HashMap<_, _>>();
+
+    for (idx, param) in target.parameters.iter_mut().enumerate() {
+        if let Some(doc) = docs_by_name.get(&param.name.to_ascii_uppercase()) {
+            param.documentation = Some(doc.clone());
+        } else if let Some(doc) = donor
+            .parameters
+            .get(idx)
+            .and_then(|param| param.documentation.clone())
+        {
+            param.documentation = Some(doc);
+        }
+    }
 }
 
 pub fn normalize_function_name(name: &str) -> String {
@@ -468,6 +543,10 @@ impl FunctionDocumentation {
     fn take_param_doc(&mut self, name: &str) -> Option<String> {
         self.param_docs.remove(&name.to_ascii_uppercase())
     }
+
+    fn has_docs(&self) -> bool {
+        self.description.is_some() || self.returns.is_some()
+    }
 }
 
 #[cfg(test)]
@@ -564,6 +643,51 @@ FUNCTION foo RETURNS INTEGER (INPUT p_value AS INTEGER) FORWARD.
         assert_eq!(
             sig.parameters[0].documentation.as_deref(),
             Some("Value to return.")
+        );
+    }
+
+    #[test]
+    fn inherits_docs_from_other_overload_when_winner_has_none() {
+        let src = r#"
+/**
+ * Returns the first position of target in source.
+ *
+ * @param source-string The string to search in.
+ * @param target-string The substring to search for.
+ * @returns The found position.
+ */
+FUNCTION index RETURNS INTEGER (
+    source-string AS CHARACTER,
+    target-string AS CHARACTER
+  ) FORWARD.
+
+FUNCTION index RETURNS INTEGER (
+    source-string AS CHARACTER,
+    target-string AS CHARACTER,
+    start-position AS INTEGER
+  ) FORWARD.
+"#;
+
+        let tree = parse_abl(src);
+        let sig = find_function_signature(tree.root_node(), src.as_bytes(), "index")
+            .expect("function signature");
+
+        assert_eq!(sig.parameters.len(), 3);
+        assert_eq!(
+            sig.documentation.description.as_deref(),
+            Some("Returns the first position of target in source.")
+        );
+        assert_eq!(
+            sig.documentation.returns.as_deref(),
+            Some("The found position.")
+        );
+        assert_eq!(
+            sig.parameters[0].documentation.as_deref(),
+            Some("The string to search in.")
+        );
+        assert_eq!(
+            sig.parameters[1].documentation.as_deref(),
+            Some("The substring to search for.")
         );
     }
 }

@@ -1,3 +1,6 @@
-ambient = ['./playground/ambient/docs.i']
 dumpfile = ['./playground/schema.df']
 propath = ['./playground', './playground/propath']
+
+[amient]
+builtin = true
+paths = ['./playground/ambient/docs.i']

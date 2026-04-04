@@ -6,6 +6,7 @@ use tower_lsp::{LspService, Server};
 mod analysis;
 mod backend;
 mod config;
+mod embedded_ambient;
 mod handlers;
 mod utils;
 
@@ -48,6 +49,7 @@ async fn main() {
             db_fields_by_table: DashMap::new(),
             include_completion_cache: DashMap::new(),
             include_parse_cache: DashMap::new(),
+            embedded_ambient_paths: Mutex::new(None),
         }),
     })
     .finish();

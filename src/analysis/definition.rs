@@ -560,6 +560,7 @@ mod tests {
                 db_fields_by_table: DashMap::new(),
                 include_completion_cache: DashMap::new(),
                 include_parse_cache: DashMap::new(),
+                embedded_ambient_paths: AsyncMutex::new(None),
             }),
         })
         .finish();
@@ -662,7 +663,8 @@ FUNCTION INDEX RETURNS INTEGER (
         let backend = test_backend();
         {
             let mut config = backend.config.lock().await;
-            config.ambient = vec![ambient.to_string_lossy().to_string()];
+            config.ambient.paths = vec![ambient.to_string_lossy().to_string()];
+            config.ambient.builtin = false;
         }
 
         let location = resolve_ambient_definition_location(&backend, "INDEX")

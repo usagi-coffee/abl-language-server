@@ -14,10 +14,27 @@ pub struct AblConfig {
     pub semantic_tokens: SemanticTokensConfig,
     #[serde(default, deserialize_with = "deserialize_dumpfile")]
     pub dumpfile: Vec<String>,
-    #[serde(default, deserialize_with = "deserialize_string_or_vec")]
-    pub ambient: Vec<String>,
+    #[serde(default, deserialize_with = "deserialize_ambient_config")]
+    pub ambient: AmbientConfig,
     #[serde(default, deserialize_with = "deserialize_propath")]
     pub propath: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct AmbientConfig {
+    pub builtin: bool,
+    #[serde(default, deserialize_with = "deserialize_string_or_vec")]
+    pub paths: Vec<String>,
+}
+
+impl Default for AmbientConfig {
+    fn default() -> Self {
+        Self {
+            builtin: true,
+            paths: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -168,8 +185,11 @@ struct PartialAblConfig {
     semantic_tokens: Option<PartialSemanticTokensConfig>,
     #[serde(default, deserialize_with = "deserialize_optional_string_or_vec")]
     dumpfile: Option<Vec<String>>,
-    #[serde(default, deserialize_with = "deserialize_optional_string_or_vec")]
-    ambient: Option<Vec<String>>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_partial_ambient_config"
+    )]
+    ambient: Option<PartialAmbientConfig>,
     #[serde(default, deserialize_with = "deserialize_optional_string_or_vec")]
     propath: Option<Vec<String>>,
 }
@@ -211,6 +231,14 @@ struct PartialFormattingConfig {
 #[serde(default)]
 struct PartialSemanticTokensConfig {
     enabled: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+struct PartialAmbientConfig {
+    builtin: Option<bool>,
+    #[serde(default, deserialize_with = "deserialize_optional_string_or_vec")]
+    paths: Option<Vec<String>>,
 }
 
 async fn load_with_inheritance(path: &Path, root_partial: PartialAblConfig) -> AblConfig {
@@ -366,8 +394,14 @@ fn merge_partial_into(base: &mut AblConfig, partial: &PartialAblConfig, config_p
             .extend(resolve_path_list_relative_to_config(config_path, dumpfile));
     }
     if let Some(ambient) = &partial.ambient {
-        base.ambient
-            .extend(resolve_path_list_relative_to_config(config_path, ambient));
+        if let Some(builtin) = ambient.builtin {
+            base.ambient.builtin = builtin;
+        }
+        if let Some(paths) = &ambient.paths {
+            base.ambient
+                .paths
+                .extend(resolve_path_list_relative_to_config(config_path, paths));
+        }
     }
     if let Some(propath) = &partial.propath {
         for resolved in resolve_path_list_relative_to_config(config_path, propath) {
@@ -463,6 +497,32 @@ where
     }))
 }
 
+fn deserialize_ambient_config<'de, D>(deserializer: D) -> Result<AmbientConfig, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserialize_optional_partial_ambient_config(deserializer)
+        .map(|partial| partial.map(AmbientConfig::from).unwrap_or_default())
+}
+
+fn deserialize_optional_partial_ambient_config<'de, D>(
+    deserializer: D,
+) -> Result<Option<PartialAmbientConfig>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<PartialAmbientConfig>::deserialize(deserializer)
+}
+
+impl From<PartialAmbientConfig> for AmbientConfig {
+    fn from(value: PartialAmbientConfig) -> Self {
+        Self {
+            builtin: value.builtin.unwrap_or(true),
+            paths: value.paths.unwrap_or_default(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{AblConfig, load_from_workspace_root};
@@ -473,14 +533,17 @@ mod tests {
         let cfg: AblConfig = toml::from_str(
             r#"
 dumpfile = "database.df"
-ambient = "ambient/docs.i"
 propath = "src/includes"
+
+[ambient]
+paths = "ambient/docs.i"
 "#,
         )
         .expect("parse config");
 
         assert_eq!(cfg.dumpfile, vec!["database.df"]);
-        assert_eq!(cfg.ambient, vec!["ambient/docs.i"]);
+        assert!(cfg.ambient.builtin);
+        assert_eq!(cfg.ambient.paths, vec!["ambient/docs.i"]);
         assert_eq!(cfg.propath, vec!["src/includes"]);
     }
 
@@ -489,14 +552,21 @@ propath = "src/includes"
         let cfg: AblConfig = toml::from_str(
             r#"
 dumpfile = ["a.df", "b.df"]
-ambient = ["/global/docs.i", "relative/ambient.i"]
 propath = ["/global/a", "relative/includes"]
+
+[ambient]
+builtin = false
+paths = ["/global/docs.i", "relative/ambient.i"]
 "#,
         )
         .expect("parse config");
 
         assert_eq!(cfg.dumpfile, vec!["a.df", "b.df"]);
-        assert_eq!(cfg.ambient, vec!["/global/docs.i", "relative/ambient.i"]);
+        assert!(!cfg.ambient.builtin);
+        assert_eq!(
+            cfg.ambient.paths,
+            vec!["/global/docs.i", "relative/ambient.i"]
+        );
         assert_eq!(cfg.propath, vec!["/global/a", "relative/includes"]);
     }
 
@@ -567,8 +637,11 @@ ignore = "custom_func"
             &parent,
             r#"
 dumpfile = "parent.df"
-ambient = ["parent/ambient.i"]
 propath = ["parent/includes"]
+
+[ambient]
+builtin = false
+paths = ["parent/ambient.i"]
 
 [completion]
 enabled = false
@@ -588,8 +661,10 @@ ignore = ["PARENT-GLOBAL"]
             r#"
 inherits = "base.toml"
 dumpfile = ["child.df"]
-ambient = ["child/ambient.i"]
 propath = ["child/includes"]
+
+[ambient]
+paths = ["child/ambient.i"]
 
 [diagnostics.unknown_variables]
 exclude = "./child-excluded.p"
@@ -634,7 +709,7 @@ ignore = ["CHILD-GLOBAL"]
             ]
         );
         assert_eq!(
-            loaded.config.ambient,
+            loaded.config.ambient.paths,
             vec![
                 parent
                     .parent()
@@ -650,6 +725,7 @@ ignore = ["CHILD-GLOBAL"]
                     .to_string(),
             ]
         );
+        assert!(!loaded.config.ambient.builtin);
         assert_eq!(
             loaded.config.propath,
             vec![

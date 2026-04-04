@@ -301,6 +301,7 @@ impl Backend {
             .await;
         is_incomplete |= include_timed_out;
         candidates.extend(include_candidates);
+        candidates.extend(self.collect_symbols_from_ambient_for_completion().await);
 
         let table_labels = &self.db_table_labels;
         candidates.extend(
@@ -406,6 +407,17 @@ impl Backend {
         (out, timed_out)
     }
 
+    async fn collect_symbols_from_ambient_for_completion(&self) -> Vec<CompletionCandidate> {
+        let mut out = Vec::new();
+        for ambient_path in self.ambient_paths().await {
+            out.extend(
+                self.get_cached_include_completion_candidates(&ambient_path)
+                    .await,
+            );
+        }
+        out
+    }
+
     async fn get_cached_include_completion_candidates(
         &self,
         include_path: &Path,
@@ -507,4 +519,118 @@ fn completion_label_matches_prefix(label: &str, prefix_upper: &str) -> bool {
         .and_then(|s| s.strip_suffix('}'))
         .map(|macro_name| macro_name.to_ascii_uppercase().starts_with(prefix_upper))
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Backend;
+    use crate::backend::BackendState;
+    use crate::config::AblConfig;
+    use dashmap::{DashMap, DashSet};
+    use std::sync::Arc;
+    use tokio::sync::Mutex as AsyncMutex;
+    use tower_lsp::lsp_types::{
+        CompletionContext, CompletionParams, CompletionResponse, Position, TextDocumentIdentifier,
+        TextDocumentPositionParams, Url,
+    };
+    use tower_lsp::{Client, LspService};
+
+    fn test_backend() -> Backend {
+        let (service, _socket) = LspService::build(|client: Client| Backend {
+            client,
+            state: Arc::new(BackendState {
+                abl_language: tree_sitter_abl::LANGUAGE.into(),
+                df_parser: AsyncMutex::new({
+                    let mut p = tree_sitter::Parser::new();
+                    p.set_language(&tree_sitter_df::LANGUAGE.into())
+                        .expect("set df language");
+                    p
+                }),
+                documents: DashMap::new(),
+                workspace_root: AsyncMutex::new(None),
+                config: AsyncMutex::new(AblConfig::default()),
+                db_tables: DashSet::new(),
+                db_sequences: DashSet::new(),
+                db_table_labels: DashMap::new(),
+                db_table_definitions: DashMap::new(),
+                db_sequence_definitions: DashMap::new(),
+                db_field_definitions: DashMap::new(),
+                db_index_definitions: DashMap::new(),
+                db_indexes_by_table: DashMap::new(),
+                db_index_fields_by_table_index: DashMap::new(),
+                db_fields_by_table: DashMap::new(),
+                include_completion_cache: DashMap::new(),
+                include_parse_cache: DashMap::new(),
+                embedded_ambient_paths: AsyncMutex::new(None),
+            }),
+        })
+        .finish();
+        let backend = service.inner().clone();
+        drop(service);
+        backend
+    }
+
+    fn completion_labels(response: CompletionResponse) -> Vec<String> {
+        match response {
+            CompletionResponse::Array(items) => items.into_iter().map(|item| item.label).collect(),
+            CompletionResponse::List(list) => {
+                list.items.into_iter().map(|item| item.label).collect()
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn completion_includes_ambient_functions() {
+        let base = std::env::temp_dir().join(format!(
+            "abl_ls_ambient_completion_test_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("epoch")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&base).expect("create temp dir");
+        let ambient = base.join("docs.i");
+        std::fs::write(
+            &ambient,
+            r#"
+FUNCTION INDEX RETURNS INTEGER (
+    source-string AS CHARACTER,
+    target-string AS CHARACTER
+  ) FORWARD.
+"#,
+        )
+        .expect("write ambient");
+
+        let backend = test_backend();
+        {
+            let mut config = backend.config.lock().await;
+            config.ambient.paths = vec![ambient.to_string_lossy().to_string()];
+            config.ambient.builtin = false;
+        }
+
+        let uri = Url::from_file_path(base.join("main.p")).expect("document uri");
+        backend.set_document_text_version(&uri, 1, "IN".to_string(), true);
+
+        let response = backend
+            .handle_completion(CompletionParams {
+                text_document_position: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier { uri },
+                    position: Position::new(0, 2),
+                },
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+                context: Some(CompletionContext {
+                    trigger_kind: tower_lsp::lsp_types::CompletionTriggerKind::INVOKED,
+                    trigger_character: None,
+                }),
+            })
+            .await
+            .expect("completion rpc")
+            .expect("completion response");
+
+        let labels = completion_labels(response);
+        assert!(labels.iter().any(|label| label == "INDEX"));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }

@@ -76,6 +76,7 @@ pub struct BackendState {
     pub db_fields_by_table: DashMap<String, Vec<DbFieldInfo>>,
     pub include_completion_cache: DashMap<PathBuf, IncludeCompletionCacheEntry>,
     pub include_parse_cache: DashMap<PathBuf, IncludeParseCacheEntry>,
+    pub embedded_ambient_paths: AsyncMutex<Option<Vec<PathBuf>>>,
 }
 
 #[derive(Clone)]
@@ -475,40 +476,53 @@ impl Backend {
     pub async fn ambient_paths(&self) -> Vec<PathBuf> {
         let workspace_root = self.workspace_root.lock().await.clone();
         let ambient = self.config.lock().await.ambient.clone();
-        let mut out = Vec::new();
+        let mut out = collect_configured_ambient_paths(workspace_root.as_deref(), &ambient.paths);
+        if ambient.builtin {
+            out.extend(self.ensure_embedded_ambient_paths().await);
+        }
+        dedup_paths_preserve_order(out)
+    }
 
-        for entry in ambient {
-            if entry.contains('*') {
-                let Some((parent, file_name_pattern)) =
-                    resolve_glob_pattern(workspace_root.as_deref(), &entry)
-                else {
-                    continue;
-                };
-                let Ok(read_dir) = std::fs::read_dir(&parent) else {
-                    continue;
-                };
-                let mut matches = read_dir
-                    .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-                    .filter(|path| {
-                        path.file_name()
-                            .and_then(|name| name.to_str())
-                            .map(|name| {
-                                crate::utils::paths::wildcard_match(&file_name_pattern, name)
-                            })
-                            .unwrap_or(false)
-                    })
-                    .filter(|path| path.is_file())
-                    .collect::<Vec<_>>();
-                matches.sort();
-                out.extend(matches);
-            } else if let Some(path) = resolve_config_path(workspace_root.as_deref(), &entry) {
-                out.push(path);
-            }
+    async fn ensure_embedded_ambient_paths(&self) -> Vec<PathBuf> {
+        let mut guard = self.embedded_ambient_paths.lock().await;
+        if let Some(paths) = guard.as_ref() {
+            return paths.clone();
         }
 
-        out.sort();
-        out.dedup();
-        out
+        let base_dir = std::env::temp_dir()
+            .join("abl-language-server")
+            .join("embedded-ambient");
+        let mut paths = Vec::new();
+
+        for file in crate::embedded_ambient::EMBEDDED_AMBIENT_FILES {
+            let relative = file
+                .relative_path
+                .strip_prefix("ambient/")
+                .unwrap_or(file.relative_path);
+            let path = base_dir.join(relative);
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let _ = std::fs::write(&path, file.contents);
+
+            let mut parser = self.new_abl_parser();
+            let Some(tree) = parser.parse(file.contents, None) else {
+                continue;
+            };
+            self.include_parse_cache.insert(
+                path.clone(),
+                IncludeParseCacheEntry {
+                    text: Arc::new(file.contents.to_string()),
+                    tree,
+                },
+            );
+            paths.push(path);
+        }
+
+        paths.sort();
+        paths.dedup();
+        *guard = Some(paths.clone());
+        paths
     }
 
     pub fn invalidate_include_caches_for_uri(&self, uri: &Url) {
@@ -752,6 +766,50 @@ fn is_abl_toml_uri(uri: &Url) -> bool {
         .unwrap_or(false)
 }
 
+fn collect_configured_ambient_paths(
+    workspace_root: Option<&Path>,
+    ambient: &[String],
+) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for entry in ambient {
+        if entry.contains('*') {
+            let Some((parent, file_name_pattern)) = resolve_glob_pattern(workspace_root, entry)
+            else {
+                continue;
+            };
+            let Ok(read_dir) = std::fs::read_dir(&parent) else {
+                continue;
+            };
+            let mut matches = read_dir
+                .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+                .filter(|path| {
+                    path.file_name()
+                        .and_then(|name| name.to_str())
+                        .map(|name| crate::utils::paths::wildcard_match(&file_name_pattern, name))
+                        .unwrap_or(false)
+                })
+                .filter(|path| path.is_file())
+                .collect::<Vec<_>>();
+            matches.sort();
+            out.extend(matches);
+        } else if let Some(path) = resolve_config_path(workspace_root, entry) {
+            out.push(path);
+        }
+    }
+    out
+}
+
+fn dedup_paths_preserve_order(paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for path in paths {
+        if seen.insert(path.clone()) {
+            out.push(path);
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Backend, BackendState};
@@ -787,6 +845,7 @@ mod tests {
                 db_fields_by_table: DashMap::new(),
                 include_completion_cache: DashMap::new(),
                 include_parse_cache: DashMap::new(),
+                embedded_ambient_paths: AsyncMutex::new(None),
             }),
         })
         .finish();
@@ -796,7 +855,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ambient_paths_expand_globs() {
+    async fn ambient_paths_include_configured_globs_and_embedded_defaults() {
         let base = std::env::temp_dir().join(format!(
             "abl_ls_ambient_glob_test_{}",
             std::time::SystemTime::now()
@@ -817,15 +876,30 @@ mod tests {
         }
         {
             let mut config = backend.config.lock().await;
-            config.ambient = vec!["ambient/*.i".to_string()];
+            config.ambient.paths = vec!["ambient/*.i".to_string()];
         }
 
         let paths = backend.ambient_paths().await;
-        assert_eq!(
-            paths,
-            vec![ambient_dir.join("a.i"), ambient_dir.join("b.i")]
+        assert!(paths.contains(&ambient_dir.join("a.i")));
+        assert!(paths.contains(&ambient_dir.join("b.i")));
+        assert!(
+            paths
+                .iter()
+                .any(|path| path.file_name().and_then(|name| name.to_str()) == Some("index.i"))
         );
 
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[tokio::test]
+    async fn ambient_paths_can_disable_embedded_defaults() {
+        let backend = test_backend();
+        {
+            let mut config = backend.config.lock().await;
+            config.ambient.builtin = false;
+        }
+
+        let paths = backend.ambient_paths().await;
+        assert!(paths.is_empty());
     }
 }

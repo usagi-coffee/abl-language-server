@@ -377,6 +377,7 @@ mod tests {
                 db_fields_by_table: DashMap::new(),
                 include_completion_cache: DashMap::new(),
                 include_parse_cache: DashMap::new(),
+                embedded_ambient_paths: AsyncMutex::new(None),
             }),
         })
         .finish();

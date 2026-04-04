@@ -24,9 +24,10 @@ The language server supports optional document formatting (auto-indent only). Fo
 | Go to Definition: local               | Local definitions                                                                                             |
 | Go to Definition: includes            | Scoped include-aware function definitions                                                                     |
 | Go to Definition: DB schema           | Tables, fields, indexes from `.df`; buffer alias -> table definition                                          |
+| Ambient declarations                  | Built-in bundled ABL ambient declarations plus optional configured ambient `.i` files                         |
 | Find References: DB table definitions | Returns matching `ADD TABLE` locations from `.df`                                                             |
 | Hover: local symbols                  | Type/detail hover                                                                                             |
-| Hover: functions                      | Signature with parameters + return type, include-aware                                                        |
+| Hover: functions                      | Signature with parameters + return type, include-aware, ambient-aware                                         |
 | Hover: DB schema                      | Table / field / index; field metadata includes type/label/format/description                                  |
 | Semantic tokens                       | Highlights DB table identifiers (`token type: type`)                                                          |
 | Formatting (auto-indent)              | Parser-aware indentation only; guarded by AST-shape check and optional idempotence check                      |
@@ -47,8 +48,16 @@ inherits = ["shared/abl.base.toml"]
 propath = ["/global/a", "includes", "shared/includes"]
 
 # Optional
-# Databse schemas: so we can pull types/go to definition will go to the entry
-dumpfile = ["schema/core.df", "schema/custom.df"]
+# Database schemas: supports explicit paths and wildcard patterns.
+dumpfile = ["schema/*.df", "schema/custom.df"]
+
+[ambient]
+# Optional; defaults to true.
+# Built-in ambient declarations bundled with the language server binary.
+builtin = true
+
+# Optional additional ambient declaration files; supports explicit paths and wildcard patterns.
+paths = ["ambient/*.i", "vendor/abl/index.i"]
 
 [completion]
 enabled = true
@@ -94,7 +103,9 @@ idempotence = true
 | `formatting.indent_size`  | `usize`              | `2`     | Spaces per indent level for formatter fallback/default behavior                        |
 | `formatting.use_tabs`      | `bool`               | `false` | Prefer tabs for indentation (LSP editor options may override per request)             |
 | `formatting.idempotence`   | `bool`               | `true`  | Runs second-pass formatting equality check before applying edits                       |
-| `dumpfile`                | `string \| string[]` | `[]`    | Path(s) to `.df` dump files; relative paths resolve from the config file that defines them |
+| `dumpfile`                | `string \| string[]` | `[]`    | Path(s) or wildcard patterns for `.df` dump files; relative paths resolve from the config file that defines them |
+| `ambient.builtin`         | `bool`               | `true`  | Enables/disables the built-in bundled ambient ABL declarations                         |
+| `ambient.paths`           | `string \| string[]` | `[]`    | Additional ambient `.i` declaration files or wildcard patterns; relative paths resolve from the config file that defines them |
 | `propath`                 | `string \| string[]` | `[]`    | Include search roots for `{...}` includes; relative paths resolve from the config file that defines them |
 
 ### Inheritance behavior
@@ -102,15 +113,24 @@ idempotence = true
 - `inherits` supports a single path or a list of paths.
 - Relative paths are resolved from the current `abl.toml` directory.
 - Parent config(s) are merged first, then the current file overrides them.
-- `dumpfile` and `propath` are concatenated in merge order (parent entries first, then child entries).
+- `dumpfile`, `ambient.paths`, and `propath` are concatenated in merge order (parent entries first, then child entries).
+- `ambient.builtin` is overridden by the last config in merge order.
 
 ### Dumpfile behavior
 
 - `.df` files are parsed with `tree-sitter-df`.
 - Schema index includes tables, fields, and indexes.
+- Wildcard dumpfile patterns are expanded before loading.
 - Index reload is triggered when:
   - `abl.toml` changes
   - configured dumpfile is saved/changed
+
+### Ambient declaration behavior
+
+- Built-in ABL ambient declarations from the repository `./ambient` directory are bundled into the binary at compile time.
+- Built-in ambient declarations are enabled by default and can be disabled with `ambient.builtin = false`.
+- Additional ambient declaration files can be added through `ambient.paths`.
+- `ambient.paths` supports wildcard patterns such as `ambient/*.i`.
 
 ### Include resolution behavior
 
