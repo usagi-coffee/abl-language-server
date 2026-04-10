@@ -39,5 +39,5 @@
  * @returns LOGICAL TRUE if a record is found meeting the criteria, otherwise FALSE
  */
 FUNCTION CAN-FIND RETURNS LOGICAL (
- find-specification
+ find-specification AS CHARACTER
  ) FORWARD.

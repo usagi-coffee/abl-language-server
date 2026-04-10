@@ -1039,7 +1039,7 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-abl"
-version = "0.0.50"
+version = "0.0.51"
 dependencies = [
  "cc",
  "tree-sitter-language",

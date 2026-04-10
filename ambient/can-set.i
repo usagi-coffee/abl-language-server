@@ -14,6 +14,6 @@
  * @returns A logical value indicating whether you can set a specified attribute for a specified widget.
  */
 FUNCTION CAN-SET RETURNS LOGICAL (
- HANDLE handle,
- CHARACTER attribute-name
+ handle AS HANDLE,
+ attribute-name AS CHARACTER
  ) FORWARD.

@@ -14,5 +14,5 @@
  * @returns INTEGER value indicating the byte order setting.
  */
 FUNCTION GET-BYTE-ORDER RETURNS INTEGER (
- MEMPTR memptr
+ memptr AS MEMPTR
  ) FORWARD.
