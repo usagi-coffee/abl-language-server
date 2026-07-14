@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
       with:
         submodules: recursive
         fetch-depth: 0
@@ -27,9 +27,9 @@ jobs:
         git submodule update --init --recursive
 
     - name: Setup Node.js
-      uses: actions/setup-node@v4
+      uses: actions/setup-node@v5
       with:
-        node-version: "20"
+        node-version: "24"
 
     - name: Install tree-sitter CLI
       run: npm install -g tree-sitter-cli
@@ -62,10 +62,78 @@ jobs:
           ./abl-language-server-linux-x86_64
 
     - name: Upload build artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: release-abl-language-server-linux-x86_64
         path: ./abl-language-server-linux-x86_64
+        if-no-files-found: error
+
+  build-linux-x86_64-gnu-old-glibc:
+    permissions:
+      contents: write
+    name: Build Release - x86_64-unknown-linux-gnu (glibc 2.28)
+    runs-on: ubuntu-latest
+    container: almalinux:8.10
+
+    steps:
+    - name: Install EL8 build tools
+      run: |
+        dnf install -y \
+          binutils-2.30-128.el8_10 \
+          curl \
+          gcc \
+          git \
+          gzip \
+          tar
+
+    - name: Verify GNU linker version
+      run: |
+        test "$(rpm -q --qf '%{VERSION}-%{RELEASE}' binutils)" = "2.30-128.el8_10"
+        ld --version
+
+    - uses: actions/checkout@v5
+      with:
+        submodules: recursive
+        fetch-depth: 0
+
+    - name: Sync and initialize submodules
+      run: |
+        git submodule sync --recursive
+        git submodule update --init --recursive
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v5
+      with:
+        node-version: "24"
+
+    - name: Install tree-sitter CLI
+      run: npm install -g tree-sitter-cli
+
+    - name: Generate parser in tree-sitter-abl submodule
+      working-directory: grammar/tree-sitter-abl
+      run: tree-sitter generate
+
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: x86_64-unknown-linux-gnu
+
+    - name: Build
+      run: cargo build --release --target x86_64-unknown-linux-gnu --verbose
+
+    - name: Strip binary
+      run: strip target/x86_64-unknown-linux-gnu/release/abl-language-server
+
+    - name: Copy binary to release asset name
+      run: |
+        cp target/x86_64-unknown-linux-gnu/release/abl-language-server \
+          ./abl-language-server-linux-x86_64-gnu-glibc-2.28
+
+    - name: Upload build artifact
+      uses: actions/upload-artifact@v6
+      with:
+        name: release-abl-language-server-linux-x86_64-gnu-glibc-2.28
+        path: ./abl-language-server-linux-x86_64-gnu-glibc-2.28
         if-no-files-found: error
 
   build-release:
@@ -102,7 +170,7 @@ jobs:
             asset_name: abl-language-server-windows-x86_64.exe
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
       with:
         submodules: recursive
         fetch-depth: 0
@@ -113,9 +181,9 @@ jobs:
         git submodule update --init --recursive
 
     - name: Setup Node.js
-      uses: actions/setup-node@v4
+      uses: actions/setup-node@v5
       with:
-        node-version: "20"
+        node-version: "24"
 
     - name: Install tree-sitter CLI
       run: npm install -g tree-sitter-cli
@@ -136,7 +204,7 @@ jobs:
         sudo apt-get install -y gcc-aarch64-linux-gnu
 
     - name: Cache cargo registry
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: ~/.cargo/registry
         key: ${{ runner.os }}-${{ matrix.target }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
@@ -144,7 +212,7 @@ jobs:
           ${{ runner.os }}-${{ matrix.target }}-cargo-registry-
 
     - name: Cache cargo index
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: ~/.cargo/git
         key: ${{ runner.os }}-${{ matrix.target }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
@@ -152,7 +220,7 @@ jobs:
           ${{ runner.os }}-${{ matrix.target }}-cargo-git-
 
     - name: Cache target directory
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: target
         key: ${{ runner.os }}-${{ matrix.target }}-target-${{ hashFiles('**/Cargo.lock') }}
@@ -175,7 +243,7 @@ jobs:
         cp target/${{ matrix.target }}/release/${{ matrix.artifact_name }} ./${{ matrix.asset_name }}
 
     - name: Upload build artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: release-${{ matrix.asset_name }}
         path: ./${{ matrix.asset_name }}
@@ -188,18 +256,19 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - build-linux-x86_64-musl
+      - build-linux-x86_64-gnu-old-glibc
       - build-release
 
     steps:
     - name: Download all release artifacts
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v7
       with:
         pattern: release-*
         path: ./release-assets
         merge-multiple: true
 
     - name: Publish GitHub Release assets
-      uses: softprops/action-gh-release@v2
+      uses: softprops/action-gh-release@v3
       with:
         files: ./release-assets/*
         draft: false
