@@ -31,13 +31,6 @@ jobs:
       with:
         node-version: "24"
 
-    - name: Install tree-sitter CLI
-      run: npm install -g tree-sitter-cli
-
-    - name: Generate parser in tree-sitter-abl submodule
-      working-directory: grammar/tree-sitter-abl
-      run: tree-sitter generate
-
     - name: Setup Rust
       uses: dtolnay/rust-toolchain@stable
       with:
@@ -106,13 +99,6 @@ jobs:
       uses: actions/setup-node@v5
       with:
         node-version: "24"
-
-    - name: Install tree-sitter CLI
-      run: npm install -g tree-sitter-cli
-
-    - name: Generate parser in tree-sitter-abl submodule
-      working-directory: grammar/tree-sitter-abl
-      run: tree-sitter generate
 
     - name: Setup Rust
       uses: dtolnay/rust-toolchain@stable
@@ -185,13 +171,6 @@ jobs:
       uses: actions/setup-node@v5
       with:
         node-version: "24"
-
-    - name: Install tree-sitter CLI
-      run: npm install -g tree-sitter-cli
-
-    - name: Generate parser in tree-sitter-abl submodule
-      working-directory: grammar/tree-sitter-abl
-      run: tree-sitter generate
 
     - name: Setup Rust
       uses: dtolnay/rust-toolchain@stable
