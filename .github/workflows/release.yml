@@ -21,16 +21,6 @@ jobs:
         submodules: recursive
         fetch-depth: 0
 
-    - name: Sync and initialize submodules
-      run: |
-        git submodule sync --recursive
-        git submodule update --init --recursive
-
-    - name: Setup Node.js
-      uses: actions/setup-node@v5
-      with:
-        node-version: "24"
-
     - name: Setup Rust
       uses: dtolnay/rust-toolchain@stable
       with:
@@ -88,17 +78,6 @@ jobs:
       with:
         submodules: recursive
         fetch-depth: 0
-
-    - name: Sync and initialize submodules
-      run: |
-        git config --global --add safe.directory "$GITHUB_WORKSPACE"
-        git submodule sync --recursive
-        git submodule update --init --recursive
-
-    - name: Setup Node.js
-      uses: actions/setup-node@v5
-      with:
-        node-version: "24"
 
     - name: Setup Rust
       uses: dtolnay/rust-toolchain@stable
@@ -161,16 +140,6 @@ jobs:
       with:
         submodules: recursive
         fetch-depth: 0
-
-    - name: Sync and initialize submodules
-      run: |
-        git submodule sync --recursive
-        git submodule update --init --recursive
-
-    - name: Setup Node.js
-      uses: actions/setup-node@v5
-      with:
-        node-version: "24"
 
     - name: Setup Rust
       uses: dtolnay/rust-toolchain@stable
