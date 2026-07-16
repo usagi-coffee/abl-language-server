@@ -181,6 +181,7 @@ fn continuation_range(node: Node<'_>) -> Option<(usize, usize)> {
 
     match node.kind() {
         "case_statement" => None,
+        "parameters" => parameter_continuation_range(node),
         "if_statement" => {
             let anchor = if_then_anchor(node)?;
             continuation_range_until_anchor(start_row, anchor)
@@ -199,6 +200,17 @@ fn continuation_range(node: Node<'_>) -> Option<(usize, usize)> {
         }
         _ => None,
     }
+}
+
+fn parameter_continuation_range(node: Node<'_>) -> Option<(usize, usize)> {
+    let from = node.start_position().row.saturating_add(1);
+    let mut cursor = node.walk();
+    let end = node
+        .named_children(&mut cursor)
+        .filter(|child| child.kind() == "parameter")
+        .map(|child| child.end_position().row)
+        .last()?;
+    (from <= end).then_some((from, end))
 }
 
 fn continuation_range_until_anchor(start_row: usize, anchor: Node<'_>) -> Option<(usize, usize)> {
@@ -465,6 +477,14 @@ mod tests {
         let input = "FUNCTION f RETURNS LOGICAL ():\nRETURN TRUE.\nEND FUNCTION.";
         let got = autoindent_text(input, IndentOptions::default());
         let expected = "FUNCTION f RETURNS LOGICAL ():\n  RETURN TRUE.\nEND FUNCTION.";
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn indents_multiline_function_parameters() {
+        let input = "FUNCTION calculate RETURNS LOGICAL (INPUT effectiveDate AS DATE,\nINPUT code AS CHARACTER,\nOUTPUT amount AS DECIMAL\n).";
+        let got = autoindent_text(input, IndentOptions::default());
+        let expected = "FUNCTION calculate RETURNS LOGICAL (INPUT effectiveDate AS DATE,\n  INPUT code AS CHARACTER,\n  OUTPUT amount AS DECIMAL\n).";
         assert_eq!(got, expected);
     }
 
