@@ -15,12 +15,7 @@ use crate::backend::Backend;
 
 const MAX_SYNTAX_DIAGNOSTICS_PER_CHANGE: usize = 64;
 
-pub async fn on_change(
-    backend: &Backend,
-    uri: Url,
-    version: i32,
-    text: String,
-) {
+pub async fn on_change(backend: &Backend, uri: Url, version: i32, text: String) {
     if !should_accept_version(backend, &uri, version) {
         return;
     }

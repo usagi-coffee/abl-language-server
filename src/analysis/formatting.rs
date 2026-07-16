@@ -85,7 +85,7 @@ fn parse_abl_tree(text: &str) -> Option<tree_sitter::Tree> {
 fn collect_line_indents(node: Node<'_>, text: &str, line_indents: &mut [usize]) {
     apply_body_indent(node, text, line_indents);
     apply_case_indent(node, line_indents);
-    apply_definition_indent(node, text, line_indents);
+    apply_definition_indent(node, line_indents);
     apply_continuation_indent(node, line_indents);
 
     let mut cursor = node.walk();
@@ -153,14 +153,11 @@ fn indent_comments_after_body(node: Node<'_>, body: Node<'_>, line_indents: &mut
     }
 }
 
-fn apply_definition_indent(node: Node<'_>, text: &str, line_indents: &mut [usize]) {
+fn apply_definition_indent(node: Node<'_>, line_indents: &mut [usize]) {
     match node.kind() {
         "function_definition" => {
             let start = first_statement_row(node);
-            let mut end = last_statement_row(node).unwrap_or_else(|| node.end_position().row);
-            if is_block_closer_line(text, end) {
-                end = end.saturating_sub(1);
-            }
+            let end = last_statement_row(node).unwrap_or_else(|| node.end_position().row);
             if let Some(start) = start {
                 add_indent_range(line_indents, start, end);
             }
@@ -501,6 +498,14 @@ mod tests {
         let input = "FUNCTION f RETURNS LOGICAL ():\nRETURN TRUE.\nEND FUNCTION.";
         let got = autoindent_text(input, IndentOptions::default());
         let expected = "FUNCTION f RETURNS LOGICAL ():\n  RETURN TRUE.\nEND FUNCTION.";
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn indents_catch_closer_inside_function() {
+        let input = "FUNCTION f RETURNS LOGICAL ():\nRETURN TRUE.\nCATCH err AS Progress.Lang.Error:\nUNDO, THROW err.\nEND.\nEND FUNCTION.";
+        let got = autoindent_text(input, IndentOptions::default());
+        let expected = "FUNCTION f RETURNS LOGICAL ():\n  RETURN TRUE.\n  CATCH err AS Progress.Lang.Error:\n    UNDO, THROW err.\n  END.\nEND FUNCTION.";
         assert_eq!(got, expected);
     }
 

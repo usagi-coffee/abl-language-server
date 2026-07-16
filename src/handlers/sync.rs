@@ -60,12 +60,7 @@ impl Backend {
         debug!("file closed!");
     }
 
-    async fn schedule_on_change(
-        &self,
-        uri: Url,
-        version: i32,
-        text: String,
-    ) {
+    async fn schedule_on_change(&self, uri: Url, version: i32, text: String) {
         let backend = self.clone();
         let task_uri = uri.clone();
         let handle = tokio::spawn(async move {

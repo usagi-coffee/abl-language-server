@@ -355,11 +355,7 @@ impl Backend {
         doc.diag_task.take()
     }
 
-    pub fn replace_document_diag_task(
-        &self,
-        uri: &Url,
-        handle: tokio::task::JoinHandle<()>,
-    ) {
+    pub fn replace_document_diag_task(&self, uri: &Url, handle: tokio::task::JoinHandle<()>) {
         match self.documents.entry(uri.clone()) {
             Entry::Occupied(mut entry) => {
                 let doc = entry.get_mut();
