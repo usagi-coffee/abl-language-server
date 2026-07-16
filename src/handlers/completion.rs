@@ -524,7 +524,7 @@ fn completion_label_matches_prefix(label: &str, prefix_upper: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::Backend;
-    use crate::backend::BackendState;
+    use crate::backend::{BackendState, DbFieldInfo};
     use crate::config::AblConfig;
     use dashmap::{DashMap, DashSet};
     use std::sync::Arc;
@@ -577,6 +577,79 @@ mod tests {
                 list.items.into_iter().map(|item| item.label).collect()
             }
         }
+    }
+
+    #[tokio::test]
+    async fn completes_fields_for_parameter_buffer_inside_procedure() {
+        let backend = test_backend();
+        backend.db_fields_by_table.insert(
+            "CUSTOMER".to_string(),
+            vec![DbFieldInfo {
+                name: "CustomerName".to_string(),
+                field_type: Some("CHARACTER".to_string()),
+                format: None,
+                label: None,
+                description: None,
+            }],
+        );
+
+        let text = r#"PROCEDURE sample:
+  DEFINE PARAMETER BUFFER bCustomer FOR Customer.
+
+  bCustomer.
+END PROCEDURE.
+"#;
+        let uri = Url::parse("file:///parameter-buffer-completion.p").expect("document uri");
+        backend.set_document_text_version(&uri, 1, text.to_string(), true);
+
+        let response = backend
+            .handle_completion(CompletionParams {
+                text_document_position: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier { uri: uri.clone() },
+                    position: Position::new(3, 12),
+                },
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+                context: Some(CompletionContext {
+                    trigger_kind: tower_lsp::lsp_types::CompletionTriggerKind::TRIGGER_CHARACTER,
+                    trigger_character: Some(".".to_string()),
+                }),
+            })
+            .await
+            .expect("completion rpc")
+            .expect("completion response");
+
+        assert!(
+            completion_labels(response)
+                .iter()
+                .any(|label| label == "CustomerName")
+        );
+
+        let text_before_dot_sync = text.replacen("bCustomer.", "bCustomer", 1);
+        backend.set_document_text_version(&uri, 2, text_before_dot_sync, true);
+
+        let response = backend
+            .handle_completion(CompletionParams {
+                text_document_position: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier { uri },
+                    position: Position::new(3, 11),
+                },
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+                context: Some(CompletionContext {
+                    trigger_kind: tower_lsp::lsp_types::CompletionTriggerKind::TRIGGER_CHARACTER,
+                    trigger_character: Some(".".to_string()),
+                }),
+            })
+            .await
+            .expect("completion rpc before dot sync")
+            .expect("completion response before dot sync");
+
+        assert!(
+            completion_labels(response)
+                .iter()
+                .any(|label| label == "CustomerName")
+        );
     }
 
     #[tokio::test]
