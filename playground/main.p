@@ -44,6 +44,10 @@ lv_name = z9zw_mstr.z9zw_name.
 DEFINE BUFFER b_mstr FOR z9zw_mstr.
 lv_before = b_mstr.z9zw_name.
 
+// Parameter buffer names should also be semantic tokens.
+DEFINE PARAMETER BUFFER pb_mstr FOR z9zw_mstr.
+lv_before = pb_mstr.z9zw_name.
+
 // Local temp/work tables should also support dot field completion.
 DEFINE TEMP-TABLE tt_local NO-UNDO
   FIELD id AS INTEGER

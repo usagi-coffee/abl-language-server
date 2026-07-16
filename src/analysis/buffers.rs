@@ -7,7 +7,7 @@ pub struct BufferMapping {
 }
 
 pub fn collect_buffer_mappings(node: Node, src: &[u8], out: &mut Vec<BufferMapping>) {
-    if node.kind() == "buffer_definition"
+    if matches!(node.kind(), "buffer_definition" | "parameter_definition")
         && let (Some(name_node), Some(table_node)) = (
             node.child_by_field_name("name"),
             node.child_by_field_name("table"),
@@ -66,5 +66,42 @@ DEFINE BUFFER b-pt FOR sports.pt_mstr.
             out.iter()
                 .any(|m| m.alias == "b-pt" && m.table == "pt_mstr")
         );
+    }
+
+    #[test]
+    fn collects_parameter_buffer_alias_and_table_name() {
+        let src = r#"
+DEFINE PARAMETER BUFFER bCustomer FOR Customer.
+DEFINE PARAMETER BUFFER bOrder FOR TEMP-TABLE ttOrder PRESELECT.
+"#;
+
+        let tree = parse_abl(src);
+
+        let mut out = Vec::new();
+        collect_buffer_mappings(tree.root_node(), src.as_bytes(), &mut out);
+
+        assert!(
+            out.iter()
+                .any(|m| m.alias == "bCustomer" && m.table == "Customer")
+        );
+        assert!(
+            out.iter()
+                .any(|m| m.alias == "bOrder" && m.table == "ttOrder")
+        );
+    }
+
+    #[test]
+    fn ignores_non_buffer_parameters() {
+        let src = r#"
+DEFINE INPUT PARAMETER customerName AS CHARACTER.
+DEFINE INPUT PARAMETER TABLE FOR ttCustomer.
+"#;
+
+        let tree = parse_abl(src);
+
+        let mut out = Vec::new();
+        collect_buffer_mappings(tree.root_node(), src.as_bytes(), &mut out);
+
+        assert!(out.is_empty());
     }
 }
