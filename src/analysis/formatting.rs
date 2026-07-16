@@ -135,6 +135,21 @@ fn apply_body_indent(node: Node<'_>, text: &str, line_indents: &mut [usize]) {
             end_row = end_row.saturating_sub(1);
         }
         add_indent_range(line_indents, start, end_row);
+        indent_comments_after_body(node, body, line_indents);
+    }
+}
+
+fn indent_comments_after_body(node: Node<'_>, body: Node<'_>, line_indents: &mut [usize]) {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() != "comment" || child.start_byte() < body.end_byte() {
+            continue;
+        }
+        add_indent_range(
+            line_indents,
+            child.start_position().row,
+            child.end_position().row,
+        );
     }
 }
 
@@ -366,6 +381,15 @@ mod tests {
         let input = "IF TRUE THEN DO:\nMESSAGE \"X\".\nEND.\n";
         let got = autoindent_text(input, IndentOptions::default());
         let expected = "IF TRUE THEN DO:\n  MESSAGE \"X\".\nEND.\n";
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn indents_comments_after_last_statement_in_block() {
+        let input =
+            "IF TRUE THEN DO:\n// leading comment\nMESSAGE \"X\".\n/* trailing\ncomment */\nEND.\n";
+        let got = autoindent_text(input, IndentOptions::default());
+        let expected = "IF TRUE THEN DO:\n  // leading comment\n  MESSAGE \"X\".\n  /* trailing\n  comment */\nEND.\n";
         assert_eq!(got, expected);
     }
 
