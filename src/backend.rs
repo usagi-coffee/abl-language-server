@@ -43,19 +43,13 @@ pub struct IncludeParseCacheEntry {
     pub tree: Tree,
 }
 
-pub struct DiagTask {
-    pub handle: tokio::task::JoinHandle<()>,
-    pub version: i32,
-    pub include_semantic_diags: bool,
-}
-
 pub struct DocumentState {
     pub text: String,
     pub version: i32,
     pub tree_version: i32,
     pub tree: Option<Tree>,
     pub parser: StdMutex<Parser>,
-    pub diag_task: Option<DiagTask>,
+    pub diag_task: Option<tokio::task::JoinHandle<()>>,
 }
 
 pub struct BackendState {
@@ -356,48 +350,27 @@ impl Backend {
         }
     }
 
-    pub fn take_document_diag_task(&self, uri: &Url) -> Option<DiagTask> {
+    pub fn take_document_diag_task(&self, uri: &Url) -> Option<tokio::task::JoinHandle<()>> {
         let mut doc = self.documents.get_mut(uri)?;
         doc.diag_task.take()
     }
 
-    pub fn try_set_document_diag_task(
+    pub fn replace_document_diag_task(
         &self,
         uri: &Url,
-        include_semantic_diags: bool,
-        version: i32,
         handle: tokio::task::JoinHandle<()>,
     ) {
         match self.documents.entry(uri.clone()) {
             Entry::Occupied(mut entry) => {
                 let doc = entry.get_mut();
                 if let Some(prev) = doc.diag_task.take() {
-                    // Keep a pending full semantic pass when a lightweight on-change pass
-                    // races in during startup. This avoids missing initial diagnostics
-                    // until the user edits or reopens the file.
-                    if prev.include_semantic_diags
-                        && !include_semantic_diags
-                        && prev.version <= version
-                    {
-                        handle.abort();
-                        doc.diag_task = Some(prev);
-                        return;
-                    }
-                    prev.handle.abort();
+                    prev.abort();
                 }
-                doc.diag_task = Some(DiagTask {
-                    handle,
-                    version,
-                    include_semantic_diags,
-                });
+                doc.diag_task = Some(handle);
             }
             Entry::Vacant(entry) => {
                 let mut doc = self.new_document_state(String::new(), -1);
-                doc.diag_task = Some(DiagTask {
-                    handle,
-                    version,
-                    include_semantic_diags,
-                });
+                doc.diag_task = Some(handle);
                 entry.insert(doc);
             }
         }

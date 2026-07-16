@@ -20,7 +20,6 @@ pub async fn on_change(
     uri: Url,
     version: i32,
     text: String,
-    include_semantic_diags: bool,
 ) {
     if !should_accept_version(backend, &uri, version) {
         return;
@@ -106,7 +105,6 @@ pub async fn on_change(
         version,
         &text,
         tree.root_node(),
-        include_semantic_diags,
         &mut diags,
     )
     .await
@@ -120,7 +118,6 @@ pub async fn on_change(
             version,
             text: &text,
             root: tree.root_node(),
-            include_semantic_diags,
             unknown_variables_enabled,
             unknown_functions_enabled,
             unknown_variables_ignored: &unknown_variables_ignored,
@@ -132,7 +129,6 @@ pub async fn on_change(
     {
         return;
     }
-    // Keep lightweight assignment type checks active for on-change diagnostics.
     collect_assignment_type_diags(tree.root_node(), text.as_bytes(), &mut diags);
     collect_function_call_arg_type_diags(tree.root_node(), text.as_bytes(), &mut diags);
     if !is_latest_version(backend, &uri, version) {

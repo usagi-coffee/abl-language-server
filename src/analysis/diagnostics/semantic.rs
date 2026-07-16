@@ -43,7 +43,6 @@ pub async fn collect_function_call_arity_diags(
     version: i32,
     text: &str,
     root: Node<'_>,
-    include_from_includes: bool,
     out: &mut Vec<Diagnostic>,
 ) -> bool {
     if !is_latest_version(backend, uri, version) {
@@ -53,7 +52,7 @@ pub async fn collect_function_call_arity_diags(
     let mut signatures = HashMap::<String, Vec<usize>>::new();
     collect_function_arities(root, text.as_bytes(), &mut signatures);
 
-    if include_from_includes && let Ok(current_path) = uri.to_file_path() {
+    if let Ok(current_path) = uri.to_file_path() {
         let include_parses =
             collect_resolved_include_parses(backend, &current_path, text, root).await;
         for (_, include_text, include_tree) in include_parses {
@@ -90,10 +89,6 @@ pub async fn collect_unknown_symbol_diags(
     params: UnknownSymbolDiagParams<'_>,
     out: &mut Vec<Diagnostic>,
 ) -> bool {
-    if !params.include_semantic_diags {
-        return true;
-    }
-
     if !is_latest_version(backend, params.uri, params.version) {
         return false;
     }
@@ -119,9 +114,7 @@ pub async fn collect_unknown_symbol_diags(
         &mut known_variables,
     );
 
-    if params.include_semantic_diags
-        && let Ok(current_path) = params.uri.to_file_path()
-    {
+    if let Ok(current_path) = params.uri.to_file_path() {
         let include_parses =
             collect_resolved_include_parses(backend, &current_path, params.text, params.root).await;
         for (_, include_text, include_tree) in include_parses {
@@ -196,7 +189,6 @@ pub struct UnknownSymbolDiagParams<'a> {
     pub version: i32,
     pub text: &'a str,
     pub root: Node<'a>,
-    pub include_semantic_diags: bool,
     pub unknown_variables_enabled: bool,
     pub unknown_functions_enabled: bool,
     pub unknown_variables_ignored: &'a HashSet<String>,
