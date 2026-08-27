@@ -218,18 +218,7 @@ fn is_statement_like(kind: &str) -> bool {
 }
 
 fn if_then_anchor(node: Node<'_>) -> Option<Node<'_>> {
-    let mut cursor = node.walk();
-    let mut saw_condition = false;
-    for child in node.named_children(&mut cursor) {
-        if !saw_condition {
-            saw_condition = true;
-            continue;
-        }
-        if is_statement_like(child.kind()) || child.kind() == "body" {
-            return Some(child);
-        }
-    }
-    None
+    node.child_by_field_name("then")
 }
 
 fn add_indent_range(line_indents: &mut [usize], start: usize, end: usize) {

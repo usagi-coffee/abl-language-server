@@ -14,17 +14,25 @@ pub(super) fn layout_lines(
         return Some(vec![collapsed]);
     }
 
-    let terms = flatten_boolean_expression(condition, text, "AND")?;
+    let operator = direct_boolean_operator(condition, text)?;
+    let terms = flatten_boolean_expression(condition, text, operator)?;
     let term_count = terms.len();
     let mut lines = Vec::with_capacity(term_count);
     for (index, term) in terms.into_iter().enumerate() {
         let mut term_lines = layout_boolean_term(term, text, column, options)?;
         if index + 1 < term_count {
-            term_lines.last_mut()?.push_str(" AND");
+            term_lines.last_mut()?.push(' ');
+            term_lines.last_mut()?.push_str(operator);
         }
         lines.extend(term_lines);
     }
     Some(lines)
+}
+
+fn direct_boolean_operator(node: Node<'_>, text: &str) -> Option<&'static str> {
+    ["OR", "AND"]
+        .into_iter()
+        .find(|keyword| has_direct_keyword(node, text, keyword))
 }
 
 fn layout_boolean_term(

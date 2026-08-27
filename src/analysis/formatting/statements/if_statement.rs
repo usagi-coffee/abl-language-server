@@ -2,8 +2,10 @@ use tree_sitter::Node;
 
 use super::super::FormatterOptions;
 use super::LayoutEdit;
+use super::condition;
 use super::support::{
-    collapse_range, collapse_whitespace, fits, is_multiline, make_edit, statement_exceeds_width,
+    collapse_range, collapse_whitespace, continuation_column, fits, is_multiline, make_edit,
+    statement_exceeds_width,
 };
 use crate::utils::ts::direct_child_by_kind;
 
@@ -30,7 +32,7 @@ pub(super) fn layout(node: Node<'_>, text: &str, options: FormatterOptions) -> O
         return None;
     }
 
-    let replacement = wrap(node, text)?;
+    let replacement = wrap(node, text, options)?;
     make_edit(node.start_byte(), node.end_byte(), original, replacement)
 }
 
@@ -76,14 +78,33 @@ fn can_collapse(node: Node<'_>) -> bool {
         && node.child_by_field_name("else").is_none()
 }
 
-fn wrap(node: Node<'_>, text: &str) -> Option<String> {
+fn wrap(node: Node<'_>, text: &str, options: FormatterOptions) -> Option<String> {
     let then_statement = node.child_by_field_name("then")?;
     if then_statement.start_position().row != then_statement.end_position().row {
         return None;
     }
+
     let header = collapse_range(text, node.start_byte(), then_statement.start_byte())?;
     let action = collapse_range(text, then_statement.start_byte(), node.end_byte())?;
-    Some(format!("{header}\n {action}"))
+    if fits(node.start_position().column, &header, options.line_width) {
+        return Some(format!("{header}\n {action}"));
+    }
+
+    let condition_node = node.named_child(0)?;
+    if condition_node.end_byte() > then_statement.start_byte() {
+        return None;
+    }
+    let prefix = collapse_range(text, node.start_byte(), condition_node.start_byte())?;
+    let mut lines = condition::layout_lines(
+        condition_node,
+        text,
+        continuation_column(node, options) + " THEN".len(),
+        options,
+    )?;
+    lines.first_mut()?.insert_str(0, &format!("{prefix} "));
+    lines.last_mut()?.push_str(" THEN");
+    lines.push(format!(" {action}"));
+    Some(lines.join("\n"))
 }
 
 #[cfg(test)]
@@ -115,6 +136,17 @@ mod tests {
             ..FormatterOptions::default()
         };
         let expected = "IF request_failed THEN UNDO, THROW NEW Progress.Lang.AppError(\"Request rejected\", 422).\n";
+        assert_safe_format(input, expected, options);
+    }
+
+    #[test]
+    fn wraps_each_boolean_condition_when_the_if_header_exceeds_line_width() {
+        let input = "IF NOT CSV-CONTAINS(Survey.Customers, customerCode) OR NOT CSV-CONTAINS(Survey.Deliveries, visit.Delivery) OR NOT CSV-CONTAINS(Survey.Agents, visit.Agent) OR NOT CSV-CONTAINS(Survey.Regions, regionCode) THEN {raise_error.i \"Survey is not assigned to this visit\"}";
+        let options = FormatterOptions {
+            line_width: 90,
+            ..FormatterOptions::default()
+        };
+        let expected = "IF NOT CSV-CONTAINS(Survey.Customers, customerCode) OR\n  NOT CSV-CONTAINS(Survey.Deliveries, visit.Delivery) OR\n  NOT CSV-CONTAINS(Survey.Agents, visit.Agent) OR\n  NOT CSV-CONTAINS(Survey.Regions, regionCode) THEN\n  {raise_error.i \"Survey is not assigned to this visit\"}\n";
         assert_safe_format(input, expected, options);
     }
 }
