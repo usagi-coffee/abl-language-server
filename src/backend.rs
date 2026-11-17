@@ -520,9 +520,10 @@ impl Backend {
         resolved_dumpfiles.sort();
         resolved_dumpfiles.dedup();
         for path in resolved_dumpfiles {
-            let Ok(contents) = tokio::fs::read_to_string(&path).await else {
+            let Ok(bytes) = tokio::fs::read(&path).await else {
                 continue;
             };
+            let contents = crate::analysis::df::decode_df(bytes);
 
             let tree = {
                 let mut parser = self.df_parser.lock().await;

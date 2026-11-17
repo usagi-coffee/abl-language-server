@@ -4,6 +4,17 @@ use tree_sitter::Node;
 
 use crate::utils::ts::node_to_range;
 
+/// Decode UTF-8 dumps directly and fall back to Windows-1250 for legacy dumps.
+pub fn decode_df(bytes: Vec<u8>) -> String {
+    match String::from_utf8(bytes) {
+        Ok(contents) => contents,
+        Err(error) => encoding_rs::WINDOWS_1250
+            .decode(&error.into_bytes())
+            .0
+            .into_owned(),
+    }
+}
+
 /// Collects table names from parsed DF source (`ADD TABLE "name"` statements).
 pub fn collect_df_table_names(node: Node, src: &[u8], out: &mut HashSet<String>) {
     if node.kind() == "add_table_statement"
@@ -286,6 +297,26 @@ mod tests {
         extract_first_quoted, extract_index_field_names, unquote,
     };
     use std::collections::HashSet;
+
+    #[test]
+    fn decodes_utf8_and_windows_1250_dumps() {
+        let utf8 = "ADD TABLE \"zażółć\"";
+        assert_eq!(super::decode_df(utf8.as_bytes().to_vec()), utf8);
+
+        let source = "ADD TABLE \"sample\"\n  DESCRIPTION \"Zażółć gęślą jaźń\"\n";
+        let (encoded, _, had_errors) = encoding_rs::WINDOWS_1250.encode(source);
+        assert!(!had_errors);
+        let decoded = super::decode_df(encoded.into_owned());
+        assert_eq!(decoded, source);
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_df::LANGUAGE.into())
+            .unwrap();
+        let tree = parser.parse(&decoded, None).unwrap();
+        let mut tables = HashSet::new();
+        collect_df_table_names(tree.root_node(), decoded.as_bytes(), &mut tables);
+        assert!(tables.contains("SAMPLE"));
+    }
 
     #[test]
     fn collects_table_field_and_index_sites() {
